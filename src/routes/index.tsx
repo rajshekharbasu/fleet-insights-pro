@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { Activity, AlertTriangle, BatteryCharging, Gauge, Recycle, Timer, Zap } from "lucide-react";
-import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
+import { AppNav } from "@/components/layout/AppNav";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { MetricTrendChart } from "@/components/dashboard/MetricTrendChart";
@@ -74,7 +74,7 @@ function DashboardPage() {
       />
 
       <div className="relative">
-        <DashboardHeader />
+        <AppNav />
 
         <main className="mx-auto max-w-[1600px] space-y-6 px-6 py-6">
           {/* Hero */}
