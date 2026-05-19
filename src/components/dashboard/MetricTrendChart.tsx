@@ -1,8 +1,11 @@
 import { useState } from "react";
 import {
-  Area, AreaChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer,
+  Area, AreaChart, CartesianGrid, Legend, Line, ReferenceLine, ResponsiveContainer,
   Tooltip, XAxis, YAxis,
 } from "recharts";
+import { useMemo } from "react";
+import { median } from "@/lib/analytics";
+import { CHART_ENTER, CHART_ENTER_FAST } from "@/lib/chart-motion";
 
 export interface TrendPoint {
   date: string;
@@ -54,24 +57,33 @@ export function MetricTrendChart({
     previous: compare && prevData?.[i] ? prevData[i][metric] : undefined,
   }));
 
+  const periodMedian = useMemo(
+    () => median(data.map((d) => d[metric])),
+    [data, metric],
+  );
+
   return (
-    <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-elevated">
+    <div className="card-interactive chart-enter rounded-2xl border border-border/50 bg-card p-5 shadow-elevated">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-[15px] font-semibold tracking-tight">Performance trend</h3>
           <p className="mt-0.5 text-[12.5px] text-muted-foreground">
-            Daily aggregate for the selected period.
+            Daily aggregate · dashed line is period median{" "}
+            <span className="num font-medium text-foreground">
+              ({periodMedian.toFixed(2)} {m.unit})
+            </span>
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center rounded-lg border border-border/60 bg-card/80 p-0.5">
+          <div className="flex flex-wrap items-center rounded-xl border border-border/50 bg-card/80 p-1">
             {METRICS.map((opt) => (
               <button
                 key={opt.key}
+                type="button"
                 onClick={() => setMetric(opt.key)}
-                className={`rounded-md px-2.5 py-1 text-[11.5px] transition-colors ${
+                className={`rounded-lg px-2.5 py-1.5 text-[11.5px] font-medium transition-all ${
                   metric === opt.key
-                    ? "bg-muted text-foreground"
+                    ? "bg-primary text-primary-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
@@ -80,9 +92,12 @@ export function MetricTrendChart({
             ))}
           </div>
           <button
+            type="button"
             onClick={() => setCompare((v) => !v)}
-            className={`rounded-lg border px-2.5 py-1 text-[11.5px] transition-colors ${
-              compare ? "border-primary/40 bg-primary/10 text-primary" : "border-border/60 text-muted-foreground hover:text-foreground"
+            className={`rounded-xl border px-3 py-1.5 text-[11.5px] font-medium transition-all ${
+              compare
+                ? "border-primary/40 bg-primary/12 text-primary"
+                : "border-border/50 text-muted-foreground hover:border-primary/25 hover:text-foreground"
             }`}
           >
             Compare prev. period
@@ -102,6 +117,18 @@ export function MetricTrendChart({
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} opacity={0.5} />
             <XAxis dataKey="date" tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={24} />
             <YAxis tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} axisLine={false} tickLine={false} width={48} />
+            <ReferenceLine
+              y={periodMedian}
+              stroke="var(--color-muted-foreground)"
+              strokeDasharray="6 4"
+              strokeWidth={1.5}
+              label={{
+                value: `Median ${periodMedian.toFixed(2)}`,
+                position: "insideTopRight",
+                fill: "var(--color-muted-foreground)",
+                fontSize: 10,
+              }}
+            />
             <Tooltip content={<CustomTooltip unit={m.unit} />} cursor={{ stroke: "var(--color-border)", strokeDasharray: "3 3" }} />
             {compare && (
               <Line
@@ -112,17 +139,18 @@ export function MetricTrendChart({
                 strokeWidth={1.4}
                 strokeDasharray="4 4"
                 dot={false}
-                isAnimationActive={false}
+                {...CHART_ENTER_FAST}
               />
             )}
             <Area
+              key={metric}
               type="monotone"
               dataKey="current"
               name={m.label}
               stroke={m.color}
               strokeWidth={2}
               fill="url(#trend-grad)"
-              isAnimationActive={false}
+              {...CHART_ENTER}
             />
             {compare && <Legend wrapperStyle={{ fontSize: 11 }} iconType="plainline" />}
           </AreaChart>

@@ -2,8 +2,12 @@ import { Calendar as CalendarIcon, Check, ChevronDown, RotateCcw, X } from "luci
 import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
-  DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuCheckboxItem,
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuCheckboxItem,
 } from "@/components/ui/dropdown-menu";
 import { FILTER_OPTIONS } from "@/lib/mock-data";
 import { DEFAULT_FILTERS, type Filters } from "@/lib/analytics";
@@ -20,8 +24,16 @@ const PRESETS: { label: string; days: number }[] = [
   { label: "180d", days: 180 },
 ];
 
+function daysBetween(from: string, to: string) {
+  return Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86400_000);
+}
+
 function MultiSelect<T extends string>({
-  label, values, options, getLabel, onToggle,
+  label,
+  values,
+  options,
+  getLabel,
+  onToggle,
 }: {
   label: string;
   values: T[];
@@ -30,21 +42,26 @@ function MultiSelect<T extends string>({
   onToggle: (v: T) => void;
 }) {
   const display = getLabel ?? ((v: T) => v);
+  const hasSelection = values.length > 0;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="h-8 gap-1.5 border-border/70 bg-card/60 text-[12.5px]">
-          <span className="text-muted-foreground">{label}</span>
+        <Button
+          variant="outline"
+          size="sm"
+          className={`h-9 gap-1.5 rounded-xl border-border/60 text-[12px] ${
+            hasSelection ? "border-primary/30 bg-primary/8 text-foreground" : "bg-card/50"
+          }`}
+        >
+          <span className={hasSelection ? "text-primary" : "text-muted-foreground"}>{label}</span>
           <span className="font-medium">
-            {values.length === 0 ? "All" : `${values.length} selected`}
+            {values.length === 0 ? "All" : `${values.length}`}
           </span>
           <ChevronDown className="h-3 w-3 opacity-60" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-h-80 w-64 overflow-y-auto">
-        <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          {label}
-        </DropdownMenuLabel>
+        <DropdownMenuLabel className="section-label">{label}</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {options.map((opt) => (
           <DropdownMenuCheckboxItem
@@ -63,6 +80,11 @@ function MultiSelect<T extends string>({
 }
 
 export function FilterBar({ filters, onChange }: Props) {
+  const activePreset = useMemo(() => {
+    const span = daysBetween(filters.from, filters.to);
+    return PRESETS.find((p) => Math.abs(span - p.days) <= 1)?.days;
+  }, [filters.from, filters.to]);
+
   const chips = useMemo(() => {
     const items: { label: string; clear: () => void }[] = [];
     filters.companies.forEach((v) => items.push({ label: v, clear: () => toggle("companies", v) }));
@@ -88,26 +110,34 @@ export function FilterBar({ filters, onChange }: Props) {
   const reset = () => onChange(DEFAULT_FILTERS);
 
   return (
-    <div className="rounded-2xl border border-border/60 bg-card/40 p-3 shadow-elevated backdrop-blur-sm">
+    <div className="rounded-2xl border border-border/50 bg-card/60 p-3.5 shadow-elevated backdrop-blur-md">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-card/70 p-0.5">
-          <CalendarIcon className="ml-1.5 h-3.5 w-3.5 text-muted-foreground" />
-          {PRESETS.map((p) => (
-            <button
-              key={p.label}
-              onClick={() => applyPreset(p.days)}
-              className="rounded-md px-2.5 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-            >
-              {p.label}
-            </button>
-          ))}
-          <div className="mx-1 h-4 w-px bg-border/70" />
-          <span className="px-2 text-[12px] num text-foreground">
+        <div className="flex items-center gap-1 rounded-xl border border-border/50 bg-card/70 p-1">
+          <CalendarIcon className="ml-2 h-3.5 w-3.5 text-muted-foreground" />
+          {PRESETS.map((p) => {
+            const active = activePreset === p.days;
+            return (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => applyPreset(p.days)}
+                className={`rounded-lg px-2.5 py-1.5 text-[12px] font-medium transition-all ${
+                  active
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                }`}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+          <div className="mx-1 h-4 w-px bg-border/60" />
+          <span className="px-2 text-[12px] num font-medium text-foreground">
             {filters.from} → {filters.to}
           </span>
         </div>
 
-        <div className="mx-1 hidden h-6 w-px bg-border/60 md:block" />
+        <div className="mx-1 hidden h-6 w-px bg-border/50 md:block" />
 
         <MultiSelect
           label="Company"
@@ -135,24 +165,30 @@ export function FilterBar({ filters, onChange }: Props) {
         />
 
         <div className="ml-auto flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={reset} className="h-8 gap-1.5 text-[12.5px] text-muted-foreground hover:text-foreground">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={reset}
+            className="h-9 gap-1.5 rounded-xl text-[12px] text-muted-foreground hover:text-foreground"
+          >
             <RotateCcw className="h-3.5 w-3.5" /> Reset
           </Button>
         </div>
       </div>
 
       {chips.length > 0 && (
-        <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-2.5">
+        <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-border/40 pt-3">
           <Check className="h-3 w-3 text-primary" />
-          <span className="mr-1 text-[11px] uppercase tracking-wider text-muted-foreground">Applied</span>
+          <span className="section-label mr-1">Applied</span>
           {chips.map((c, i) => (
             <button
               key={i}
+              type="button"
               onClick={c.clear}
-              className="group inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[11.5px] text-foreground transition-colors hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
+              className="group inline-flex items-center gap-1 rounded-full border border-border/50 bg-muted/30 px-2.5 py-0.5 text-[11.5px] text-foreground transition-colors hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
             >
               {c.label}
-              <X className="h-3 w-3 opacity-60 group-hover:opacity-100" />
+              <X className="h-3 w-3 opacity-50 group-hover:opacity-100" />
             </button>
           ))}
         </div>

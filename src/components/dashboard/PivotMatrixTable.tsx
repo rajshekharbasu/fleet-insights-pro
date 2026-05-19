@@ -1,6 +1,7 @@
 import { ArrowUpDown, Search } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { PivotDim, PivotRow } from "@/lib/analytics";
+import { MedianLegend, PivotMedianFooter, VsMedianCell } from "@/components/dashboard/MedianBaseline";
+import { computePivotMedians, type PivotDim, type PivotRow } from "@/lib/analytics";
 
 const DIMS: { key: PivotDim; label: string }[] = [
   { key: "driver_name", label: "Driver" },
@@ -45,15 +46,19 @@ export function PivotMatrixTable({
   }, [rows, sortKey, asc, q]);
 
   const maxNetKwh = Math.max(1, ...rows.map((r) => r.netKwh));
+  const medians = useMemo(() => computePivotMedians(rows), [rows]);
 
   return (
-    <div className="rounded-2xl border border-border/60 bg-card shadow-elevated">
+    <div className="card-interactive overflow-hidden rounded-2xl border border-border/50 bg-card shadow-elevated">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 p-4">
         <div>
           <h3 className="text-[15px] font-semibold tracking-tight">Pivot exploration</h3>
           <p className="mt-0.5 text-[12.5px] text-muted-foreground">
-            Aggregate metrics across any dimension. Click a row for trip-level detail.
+            Aggregate metrics across any dimension. Values are colored vs the pivot median baseline.
           </p>
+          <div className="mt-2">
+            <MedianLegend />
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center rounded-lg border border-border/60 bg-card/80 p-0.5">
@@ -122,9 +127,24 @@ export function PivotMatrixTable({
                 <td className="px-4 py-2.5 text-right num text-muted-foreground">{r.trips}</td>
                 <td className="px-4 py-2.5 text-right num text-muted-foreground">{r.distance.toLocaleString()} km</td>
                 <td className="px-4 py-2.5 text-right num text-foreground">{r.netKwh.toLocaleString()}</td>
-                <td className="px-4 py-2.5 text-right num text-foreground">{r.kwhPerKm.toFixed(2)}</td>
-                <td className="px-4 py-2.5 text-right num text-muted-foreground">{r.regenRatio.toFixed(1)}%</td>
-                <td className="px-4 py-2.5 text-right num text-muted-foreground">{r.idleShare.toFixed(1)}%</td>
+                <td className="px-4 py-2.5 text-right">
+                  <VsMedianCell value={r.kwhPerKm} median={medians.kwhPerKm} lowerIsBetter />
+                </td>
+                <td className="px-4 py-2.5 text-right">
+                  <VsMedianCell
+                    value={r.regenRatio}
+                    median={medians.regenRatio}
+                    lowerIsBetter={false}
+                    format={(v) => `${v.toFixed(1)}%`}
+                  />
+                </td>
+                <td className="px-4 py-2.5 text-right">
+                  <VsMedianCell
+                    value={r.idleShare}
+                    median={medians.idleShare}
+                    format={(v) => `${v.toFixed(1)}%`}
+                  />
+                </td>
                 <td className="px-4 py-2.5 text-right">
                   <span
                     className={`num inline-flex min-w-[28px] items-center justify-center rounded-md px-1.5 py-0.5 text-[11.5px] font-medium ${
@@ -140,6 +160,7 @@ export function PivotMatrixTable({
                 </td>
               </tr>
             ))}
+            {sorted.length > 0 && <PivotMedianFooter medians={medians} />}
             {sorted.length === 0 && (
               <tr>
                 <td colSpan={COLS.length} className="px-4 py-12 text-center text-muted-foreground">

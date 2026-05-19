@@ -115,6 +115,49 @@ export interface PivotRow {
   anomalies: number;
 }
 
+/** Median of numeric samples (even count averages the two middle values). */
+export function median(values: number[]): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+export interface PivotMedians {
+  kwhPerKm: number;
+  regenRatio: number;
+  idleShare: number;
+  anomalies: number;
+  netKwh: number;
+  trips: number;
+  distance: number;
+}
+
+export function computePivotMedians(rows: PivotRow[]): PivotMedians {
+  if (!rows.length) {
+    return {
+      kwhPerKm: 0,
+      regenRatio: 0,
+      idleShare: 0,
+      anomalies: 0,
+      netKwh: 0,
+      trips: 0,
+      distance: 0,
+    };
+  }
+  return {
+    kwhPerKm: +median(rows.map((r) => r.kwhPerKm)).toFixed(3),
+    regenRatio: +median(rows.map((r) => r.regenRatio)).toFixed(2),
+    idleShare: +median(rows.map((r) => r.idleShare)).toFixed(2),
+    anomalies: +median(rows.map((r) => r.anomalies)).toFixed(1),
+    netKwh: +median(rows.map((r) => r.netKwh)).toFixed(1),
+    trips: +median(rows.map((r) => r.trips)).toFixed(0),
+    distance: +median(rows.map((r) => r.distance)).toFixed(1),
+  };
+}
+
 export function pivot(trips: Trip[], dim: PivotDim): PivotRow[] {
   const buckets = new Map<string, Trip[]>();
   for (const t of trips) {

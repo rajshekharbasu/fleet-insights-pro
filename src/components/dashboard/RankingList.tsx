@@ -1,6 +1,7 @@
 import { Award, TrendingDown, TrendingUp } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { PivotDim, PivotRow } from "@/lib/analytics";
+import { MedianRangeBar } from "@/components/dashboard/MedianBaseline";
+import { computePivotMedians, type PivotDim, type PivotRow } from "@/lib/analytics";
 
 const DIMS: { key: PivotDim; label: string }[] = [
   { key: "driver_name", label: "Drivers" },
@@ -21,6 +22,8 @@ export function RankingList({ rowsByDim }: { rowsByDim: (dim: PivotDim) => Pivot
   const [metricKey, setMetricKey] = useState<typeof METRICS[number]["key"]>("kwhPerKm");
   const metric = METRICS.find((m) => m.key === metricKey)!;
   const rows = rowsByDim(dim).filter((r) => r.trips >= 3);
+  const medians = useMemo(() => computePivotMedians(rows), [rows]);
+  const medianVal = medians[metricKey as keyof typeof medians] as number;
 
   const { top, bottom } = useMemo(() => {
     const sorted = [...rows].sort((a, b) => {
@@ -32,12 +35,16 @@ export function RankingList({ rowsByDim }: { rowsByDim: (dim: PivotDim) => Pivot
   }, [rows, metricKey, metric.lowerIsBetter]);
 
   return (
-    <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-elevated">
+    <div className="card-interactive rounded-2xl border border-border/50 bg-card p-5 shadow-elevated">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-[15px] font-semibold tracking-tight">Performance rankings</h3>
           <p className="mt-0.5 text-[12.5px] text-muted-foreground">
-            Best and worst performers across the fleet (min. 3 trips).
+            Best and worst vs pivot median{" "}
+            <span className="num font-medium text-primary">
+              ({metric.format(medianVal)})
+            </span>
+            {" "}— min. 3 trips.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -71,24 +78,27 @@ export function RankingList({ rowsByDim }: { rowsByDim: (dim: PivotDim) => Pivot
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <RankColumn title="Top performers" tone="success" rows={top} metric={metric} icon={<TrendingUp className="h-3.5 w-3.5" />} />
-        <RankColumn title="Underperformers" tone="destructive" rows={bottom} metric={metric} icon={<TrendingDown className="h-3.5 w-3.5" />} />
+        <RankColumn title="Top performers" tone="success" rows={top} metric={metric} median={medianVal} icon={<TrendingUp className="h-3.5 w-3.5" />} />
+        <RankColumn title="Underperformers" tone="destructive" rows={bottom} metric={metric} median={medianVal} icon={<TrendingDown className="h-3.5 w-3.5" />} />
       </div>
     </div>
   );
 }
 
 function RankColumn({
-  title, rows, metric, tone, icon,
+  title, rows, metric, median, tone, icon,
 }: {
   title: string;
   rows: PivotRow[];
   metric: typeof METRICS[number];
+  median: number;
   tone: "success" | "destructive";
   icon: React.ReactNode;
 }) {
   const accent = tone === "success" ? "text-success bg-success/10 ring-success/20" : "text-destructive bg-destructive/10 ring-destructive/20";
-  const max = Math.max(...rows.map((r) => Math.abs(r[metric.key] as number)), 1);
+  const values = rows.map((r) => r[metric.key] as number);
+  const min = Math.min(median, ...values);
+  const max = Math.max(median, ...values, 1);
 
   return (
     <div>
@@ -100,7 +110,6 @@ function RankColumn({
       <ol className="space-y-1.5">
         {rows.map((r, i) => {
           const v = r[metric.key] as number;
-          const w = (Math.abs(v) / max) * 100;
           return (
             <li
               key={r.key}
@@ -111,12 +120,13 @@ function RankColumn({
               </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[12.5px] font-medium text-foreground">{r.label}</div>
-                <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-muted/60">
-                  <div
-                    className={tone === "success" ? "h-full bg-success/70" : "h-full bg-destructive/70"}
-                    style={{ width: `${w}%` }}
-                  />
-                </div>
+                <MedianRangeBar
+                  value={v}
+                  median={median}
+                  min={min}
+                  max={max}
+                  lowerIsBetter={metric.lowerIsBetter}
+                />
               </div>
               <div className="text-right">
                 <div className="num text-[12.5px] font-semibold text-foreground">{metric.format(v)}</div>

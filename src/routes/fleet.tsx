@@ -9,8 +9,9 @@ import {
 } from "recharts";
 import { PageShell } from "@/components/layout/AppNav";
 import { InsightCard } from "@/components/dashboard/InsightCard";
-import { GeoCanvas } from "@/components/maps/GeoCanvas";
+import { FleetMapLoader } from "@/components/maps/FleetMapLoader";
 import { DRIVERS, FLEET_KPIS, ROUTES, SEGMENTS } from "@/lib/fleet-data";
+import { CHART_ENTER } from "@/lib/chart-motion";
 
 export const Route = createFileRoute("/fleet")({
   head: () => ({
@@ -38,7 +39,7 @@ function HeroKpi({ label, value, unit, tone = "default", icon: Icon, hint }: {
       : tone === "success" ? "text-success bg-success/10 ring-success/25"
       : "text-primary bg-primary/10 ring-primary/25";
   return (
-    <div className="group relative overflow-hidden rounded-2xl border border-border/60 bg-card p-5 shadow-elevated">
+    <div className="accent-bar-top card-interactive group relative overflow-hidden rounded-2xl border border-border/50 bg-card p-5 shadow-elevated">
       <div
         className="pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full opacity-50 blur-2xl transition-opacity group-hover:opacity-75"
         style={{
@@ -105,7 +106,8 @@ function FleetCommandPage() {
   return (
     <PageShell
       eyebrow="Unified · all gold-layer facts"
-      title="Fleet Command Center"
+      title="Fleet Command"
+      titleAccent="Center"
       description="Executive operational intelligence across routes, segments, drivers and energy systems."
       meta={
         <div className="flex items-center gap-2">
@@ -135,9 +137,15 @@ function FleetCommandPage() {
       {/* B. Map + D. Radar */}
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <div className="xl:col-span-2">
-          <GeoCanvas routes={ROUTES} segments={SEGMENTS} activeKinds={["risk"]} height={520} />
+          <FleetMapLoader
+            routes={ROUTES}
+            segments={SEGMENTS}
+            activeKinds={["risk"]}
+            height={520}
+            dmsMode="summary"
+          />
         </div>
-        <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-elevated">
+        <div className="chart-enter rounded-2xl border border-border/60 bg-card p-5 shadow-elevated">
           <div className="mb-3 flex items-center justify-between">
             <div>
               <h3 className="text-[15px] font-semibold tracking-tight">Operational risk radar</h3>
@@ -150,7 +158,7 @@ function FleetCommandPage() {
               <RadarChart data={radar} outerRadius="78%">
                 <PolarGrid stroke="var(--color-border)" />
                 <PolarAngleAxis dataKey="axis" tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} />
-                <Radar dataKey="v" stroke="var(--color-primary)" fill="var(--color-primary)" fillOpacity={0.22} isAnimationActive={false} />
+                <Radar dataKey="v" stroke="var(--color-primary)" fill="var(--color-primary)" fillOpacity={0.22} {...CHART_ENTER} />
                 <Tooltip contentStyle={{ background: "var(--color-popover)", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 12 }} />
               </RadarChart>
             </ResponsiveContainer>

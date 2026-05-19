@@ -13,6 +13,7 @@ import { Route as SegmentsRouteImport } from './routes/segments'
 import { Route as RoutesRouteImport } from './routes/routes'
 import { Route as FleetRouteImport } from './routes/fleet'
 import { Route as DriversRouteImport } from './routes/drivers'
+import { Route as ChargingRouteImport } from './routes/charging'
 import { Route as IndexRouteImport } from './routes/index'
 
 const SegmentsRoute = SegmentsRouteImport.update({
@@ -35,6 +36,11 @@ const DriversRoute = DriversRouteImport.update({
   path: '/drivers',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ChargingRoute = ChargingRouteImport.update({
+  id: '/charging',
+  path: '/charging',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -43,6 +49,7 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/charging': typeof ChargingRoute
   '/drivers': typeof DriversRoute
   '/fleet': typeof FleetRoute
   '/routes': typeof RoutesRoute
@@ -50,6 +57,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/charging': typeof ChargingRoute
   '/drivers': typeof DriversRoute
   '/fleet': typeof FleetRoute
   '/routes': typeof RoutesRoute
@@ -58,6 +66,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/charging': typeof ChargingRoute
   '/drivers': typeof DriversRoute
   '/fleet': typeof FleetRoute
   '/routes': typeof RoutesRoute
@@ -65,14 +74,22 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/drivers' | '/fleet' | '/routes' | '/segments'
+  fullPaths: '/' | '/charging' | '/drivers' | '/fleet' | '/routes' | '/segments'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/drivers' | '/fleet' | '/routes' | '/segments'
-  id: '__root__' | '/' | '/drivers' | '/fleet' | '/routes' | '/segments'
+  to: '/' | '/charging' | '/drivers' | '/fleet' | '/routes' | '/segments'
+  id:
+    | '__root__'
+    | '/'
+    | '/charging'
+    | '/drivers'
+    | '/fleet'
+    | '/routes'
+    | '/segments'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ChargingRoute: typeof ChargingRoute
   DriversRoute: typeof DriversRoute
   FleetRoute: typeof FleetRoute
   RoutesRoute: typeof RoutesRoute
@@ -109,6 +126,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DriversRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/charging': {
+      id: '/charging'
+      path: '/charging'
+      fullPath: '/charging'
+      preLoaderRoute: typeof ChargingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -121,6 +145,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ChargingRoute: ChargingRoute,
   DriversRoute: DriversRoute,
   FleetRoute: FleetRoute,
   RoutesRoute: RoutesRoute,
@@ -129,3 +154,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

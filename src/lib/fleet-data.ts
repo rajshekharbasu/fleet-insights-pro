@@ -45,29 +45,46 @@ export interface RouteContext {
 }
 
 const ROUTE_SEEDS = [
-  { code: "R-101", name: "Harbor → Midtown Loop" },
-  { code: "R-204", name: "Northgate Express" },
-  { code: "R-309", name: "Industrial Belt" },
-  { code: "R-417", name: "Airport Shuttle" },
-  { code: "R-522", name: "Cross-City Trunk" },
-  { code: "R-630", name: "Riverside Corridor" },
-  { code: "R-744", name: "Tech Park Circular" },
-  { code: "R-812", name: "Old Town Connector" },
-  { code: "R-905", name: "Highland Express" },
-  { code: "R-1020", name: "Port Logistics" },
+  { code: "R-101", name: "Dadar → BKC Loop" },
+  { code: "R-204", name: "Western Express Highway" },
+  { code: "R-309", name: "Andheri Industrial Belt" },
+  { code: "R-417", name: "CSIA Airport Shuttle" },
+  { code: "R-522", name: "Eastern Freeway Trunk" },
+  { code: "R-630", name: "Bandra–Worli Sea Link" },
+  { code: "R-744", name: "Powai Tech Park Circular" },
+  { code: "R-812", name: "South Mumbai Connector" },
+  { code: "R-905", name: "Thane–Mulund Express" },
+  { code: "R-1020", name: "JNPT Port Logistics" },
 ];
 
-function makePath(seed: number, segCount: number) {
+/** Spread routes across Mumbai so polylines don't stack on the overview map. */
+const MUMBAI_ROUTE_ANCHORS = [
+  { x: 0.14, y: 0.84 }, // South Mumbai
+  { x: 0.26, y: 0.7 }, // Dadar
+  { x: 0.4, y: 0.55 }, // Worli / Lower Parel
+  { x: 0.55, y: 0.4 }, // BKC
+  { x: 0.72, y: 0.52 }, // Andheri E
+  { x: 0.86, y: 0.68 }, // Goregaon
+  { x: 0.74, y: 0.82 }, // Malad
+  { x: 0.52, y: 0.88 }, // Santacruz
+  { x: 0.32, y: 0.38 }, // Harbour / Wadala
+  { x: 0.18, y: 0.52 }, // Mahalaxmi
+];
+
+function makePath(seed: number, segCount: number, routeIndex: number) {
   const rr = mulberry32(seed);
+  const anchor = MUMBAI_ROUTE_ANCHORS[routeIndex % MUMBAI_ROUTE_ANCHORS.length];
   const pts: { x: number; y: number }[] = [];
-  let x = 0.08 + rr() * 0.18;
-  let y = 0.15 + rr() * 0.7;
+  let x = clamp(anchor.x + (rr() - 0.5) * 0.05, 0.06, 0.94);
+  let y = clamp(anchor.y + (rr() - 0.5) * 0.05, 0.06, 0.94);
   pts.push({ x, y });
   for (let i = 0; i < segCount; i++) {
-    x += 0.05 + rr() * 0.06;
-    y += (rr() - 0.5) * 0.18;
-    y = clamp(y, 0.08, 0.92);
-    x = clamp(x, 0.05, 0.95);
+    const step = 0.028 + rr() * 0.022;
+    const angle = rr() * Math.PI * 2;
+    x += Math.cos(angle) * step;
+    y += Math.sin(angle) * step * 0.75;
+    x = clamp(x, 0.06, 0.94);
+    y = clamp(y, 0.06, 0.94);
     pts.push({ x, y });
   }
   return pts;
@@ -106,7 +123,7 @@ export const ROUTES: RouteContext[] = ROUTE_SEEDS.map((s, i) => {
     peak_dms_index: +clamp(g(58, 18) + difficulty * 0.3, 10, 98).toFixed(1),
     offpeak_dms_index: +clamp(g(30, 12) + difficulty * 0.15, 5, 80).toFixed(1),
     energy_leakage_kwh: +clamp(g(140, 80) + difficulty * 2.4, 10, 980).toFixed(1),
-    path: makePath(100 + i * 17, segCount),
+    path: makePath(100 + i * 17, segCount, i),
   };
 });
 

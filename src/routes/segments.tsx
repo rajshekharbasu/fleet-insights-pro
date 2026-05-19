@@ -8,7 +8,8 @@ import {
 } from "recharts";
 import { PageShell } from "@/components/layout/AppNav";
 import { InsightCard } from "@/components/dashboard/InsightCard";
-import { GeoCanvas, type HotspotKind } from "@/components/maps/GeoCanvas";
+import { FleetMapLoader } from "@/components/maps/FleetMapLoader";
+import { KIND_LABEL, type HotspotKind } from "@/lib/geo-data";
 import { ROUTES, SEGMENTS, type SegmentRisk } from "@/lib/fleet-data";
 
 export const Route = createFileRoute("/segments")({
@@ -26,13 +27,13 @@ export const Route = createFileRoute("/segments")({
 const fmt = (n: number, d = 1) =>
   n.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
 
-const KINDS: { key: HotspotKind; label: string }[] = [
-  { key: "risk", label: "Composite risk" },
-  { key: "harsh_braking", label: "Harsh braking" },
-  { key: "overspeed", label: "Overspeed" },
-  { key: "distraction", label: "Distraction" },
-  { key: "drowsiness", label: "Drowsiness" },
-  { key: "rough_road", label: "Rough road" },
+const KINDS: HotspotKind[] = [
+  "risk",
+  "harsh_braking",
+  "overspeed",
+  "distraction",
+  "drowsiness",
+  "rough_road",
 ];
 
 function Sparkline({ data, color = "var(--color-primary)" }: { data: { v: number }[]; color?: string }) {
@@ -148,26 +149,29 @@ function SegmentRiskPage() {
       {/* A. Hero map */}
       <section className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-1 rounded-lg border border-border/60 bg-card/70 p-0.5">
+          <div className="flex flex-wrap items-center gap-1 rounded-xl border border-border/50 bg-card/70 p-1">
             {KINDS.map((k) => {
-              const isActive = active.includes(k.key);
+              const isActive = active.includes(k);
               return (
                 <button
-                  key={k.key}
+                  key={k}
+                  type="button"
                   onClick={() =>
                     setActive((prev) =>
-                      prev.includes(k.key) && prev.length > 1
-                        ? prev.filter((x) => x !== k.key)
-                        : prev.includes(k.key)
-                        ? prev
-                        : [k.key],
+                      prev.includes(k) && prev.length > 1
+                        ? prev.filter((x) => x !== k)
+                        : prev.includes(k)
+                          ? prev
+                          : [k],
                     )
                   }
-                  className={`rounded-md px-2.5 py-1 text-[11.5px] transition-colors ${
-                    isActive ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
+                  className={`rounded-lg px-2.5 py-1.5 text-[11.5px] font-medium transition-all ${
+                    isActive
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  {k.label}
+                  {KIND_LABEL[k]}
                 </button>
               );
             })}
@@ -182,10 +186,11 @@ function SegmentRiskPage() {
             </div>
           )}
         </div>
-        <GeoCanvas
+        <FleetMapLoader
           routes={ROUTES}
           segments={SEGMENTS}
           activeKinds={active}
+          dmsMode="summary"
           onSegmentHover={setHover}
           onSegmentClick={setSelected}
           height={560}
