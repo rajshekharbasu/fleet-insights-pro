@@ -75,9 +75,8 @@ function DashboardPage() {
   const tripMedians = useMemo(
     () => ({
       kwhPerKm: median(filteredTrips.map((t) => t.kwh_per_km)),
-      regenRatio: median(
-        filteredTrips.map((t) => t.regen_kwh / Math.max(t.gross_discharge_kwh, 0.01)) * 100,
-      ),
+      regenRatio:
+        median(filteredTrips.map((t) => t.regen_kwh / Math.max(t.gross_discharge_kwh, 0.01))) * 100,
       socDropPerKm: median(filteredTrips.map((t) => t.soc_drop_per_km)),
       idleShare: median(filteredTrips.map((t) => t.idle_energy_share_pct)),
     }),
