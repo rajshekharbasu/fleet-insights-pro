@@ -69,11 +69,14 @@ export function SectionBus({
   const [metric, setMetric] = useState<BusBehaviorMetric>("energy_per_soc");
   const rows = useMemo(() => busLeaderboardExtended(buses), [buses]);
   const trend = useMemo(() => busBehaviorTrend(buses, metric), [buses, metric]);
-  const stats = useMemo(() => trendSummaryStats(trend.map((t) => ({ ...t, abnormalSessions: 0 }))), [trend]);
+  const stats = useMemo(
+    () => trendSummaryStats(trend.map((t) => ({ ...t, abnormalSessions: 0, abnormalBuses: 0 }))),
+    [trend],
+  );
   const scatter = useMemo(() => busPeerScatter(buses).map((b) => ({
     ...b,
-    accept: rows.find((r) => r.vehicle === b.vehicle)?.charge_acceptance_rate ?? 70,
-    thermalKwh: rows.find((r) => r.vehicle === b.vehicle)?.thermal_rise_per_kwh ?? 1,
+    accept: rows.find((r) => r.vehicle_number === b.vehicle)?.charge_acceptance_rate ?? 70,
+    thermalKwh: rows.find((r) => r.vehicle_number === b.vehicle)?.thermal_rise_per_kwh ?? 1,
   })), [buses, rows]);
   const heatmap = useMemo(() => busThermalHeatmap(buses, 10), [buses]);
 
