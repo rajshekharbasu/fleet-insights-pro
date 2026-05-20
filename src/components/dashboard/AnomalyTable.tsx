@@ -1,4 +1,5 @@
 import { AlertTriangle, Flame, ShieldAlert, Waves, Zap } from "lucide-react";
+import { ExportTableButton } from "@/components/insights/ExportTableButton";
 import type { Trip } from "@/lib/mock-data";
 
 interface Props {
@@ -34,7 +35,19 @@ export function AnomalyTable({ trips, onSelect }: Props) {
             {flagged.length} flagged trips out of {trips.length} in the current window.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <ExportTableButton
+            filename="voltline-anomalies"
+            columns={[
+              { key: "trip_id", header: "Trip" },
+              { key: "scheduling_date", header: "Date" },
+              { key: "driver_name", header: "Driver" },
+              { key: "route_code", header: "Route" },
+              { key: "vehiclenumber", header: "Vehicle" },
+              { key: "kwh_per_km", header: "kWh/km" },
+            ]}
+            rows={flagged as unknown as Record<string, unknown>[]}
+          />
           {counts.map((c) => {
             const Icon = c.icon;
             const tone = c.tone === "destructive" ? "text-destructive bg-destructive/10 ring-destructive/20" : "text-warning bg-warning/10 ring-warning/20";

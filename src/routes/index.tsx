@@ -20,6 +20,7 @@ import { PivotMatrixTable } from "@/components/dashboard/PivotMatrixTable";
 import { RankingList } from "@/components/dashboard/RankingList";
 import { AnomalyTable } from "@/components/dashboard/AnomalyTable";
 import { TripDetailDrawer } from "@/components/dashboard/TripDetailDrawer";
+import { DailyInsightsBrief } from "@/components/insights/DailyInsightsBrief";
 import { RouteEfficiencyChart } from "@/components/dashboard/RouteEfficiencyChart";
 import { SectionHeader } from "@/components/layout/SectionHeader";
 import {
@@ -122,6 +123,8 @@ function DashboardPage() {
       }
     >
       <FilterBar filters={filters} onChange={setFilters} />
+
+      <DailyInsightsBrief trips={filteredTrips} />
 
       <section id="overview" className="space-y-4">
         <SectionHeader

@@ -1,6 +1,7 @@
 import { ArrowUpDown, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { MedianLegend, PivotMedianFooter, VsMedianCell } from "@/components/dashboard/MedianBaseline";
+import { ExportTableButton } from "@/components/insights/ExportTableButton";
 import { computePivotMedians, type PivotDim, type PivotRow } from "@/lib/analytics";
 
 const DIMS: { key: PivotDim; label: string }[] = [
@@ -74,6 +75,14 @@ export function PivotMatrixTable({
               </button>
             ))}
           </div>
+          <ExportTableButton
+            filename={`voltline-pivot-${dim}`}
+            columns={COLS.filter((c) => c.key !== "label").map((c) => ({
+              key: c.key,
+              header: c.label,
+            })).concat([{ key: "label", header: "Entity" }])}
+            rows={sorted as unknown as Record<string, unknown>[]}
+          />
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
