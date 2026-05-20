@@ -48,6 +48,8 @@ import type {
   DepotEnergyDaily,
   MaintenanceRecommendation,
 } from "@/lib/charger-data";
+import { AbnormalBusTrendPanel } from "@/components/charger/AbnormalBusTrendPanel";
+import { AbnormalChargerTrendPanel } from "@/components/charger/AbnormalChargerTrendPanel";
 import {
   fmt,
   GlassPanel,
@@ -67,6 +69,7 @@ export function SectionBus({
   maintenance: MaintenanceRecommendation[];
 }) {
   const [metric, setMetric] = useState<BusBehaviorMetric>("energy_per_soc");
+  const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const rows = useMemo(() => busLeaderboardExtended(buses), [buses]);
   const trend = useMemo(() => busBehaviorTrend(buses, metric), [buses, metric]);
   const stats = useMemo(
@@ -88,7 +91,7 @@ export function SectionBus({
       description="Which buses are degrading — energy per SOC, thermal stress, acceptance rate, and stability vs fleet norms."
     >
       <GlassPanel>
-        <PanelHead title="Fleet health matrix" sub="Percentile-ranked · sparkline abnormality trend" />
+        <PanelHead title="Fleet health matrix" sub="Click an unhealthy row to load 30-day KPI trends below" />
         <div className="max-h-[360px] overflow-auto">
           <table className="cc-table w-full text-[12px]">
             <thead>
@@ -100,7 +103,11 @@ export function SectionBus({
             </thead>
             <tbody>
               {rows.slice(0, 20).map((r) => (
-                <tr key={r.vehicle_id} className={`cc-row ${r.risk !== "healthy" ? "cc-row-alert" : ""}`}>
+                <tr
+                  key={r.vehicle_id}
+                  onClick={() => r.risk !== "healthy" && setSelectedBusId(r.vehicle_id)}
+                  className={`cc-row ${r.risk !== "healthy" ? "cc-row-alert cursor-pointer" : ""} ${selectedBusId === r.vehicle_id ? "ring-1 ring-inset ring-primary/50" : ""}`}
+                >
                   <td className="px-3 py-2 font-medium num">{r.vehicle_number}</td>
                   <td className="px-3 py-2 text-muted-foreground">{r.depot_name}</td>
                   <td className="px-3 py-2 num">{fmt(r.energy_per_soc_pct, 2)}</td>
@@ -116,6 +123,14 @@ export function SectionBus({
           </table>
         </div>
       </GlassPanel>
+
+      <AbnormalBusTrendPanel
+        buses={buses}
+        leaderboard={rows}
+        variant="glass"
+        selectedVehicleId={selectedBusId}
+        onSelectVehicle={setSelectedBusId}
+      />
 
       <GlassPanel className="p-5">
         <PanelHead title="Charging behavioral intelligence" sub="30-day rolling · fleet average overlay" />
@@ -223,6 +238,7 @@ export function SectionCharger({
   chargers: ChargerHealthDaily[];
   compatibility: ChargerBusCompatibility[];
 }) {
+  const [selectedChargerId, setSelectedChargerId] = useState<string | null>(null);
   const rows = useMemo(() => chargerLeaderboardExtended(chargers), [chargers]);
   const daily = useMemo(() => chargerDailyTrends(chargers), [chargers]);
 
@@ -234,7 +250,7 @@ export function SectionCharger({
       description="Charger throughput, utilization, stability, expected expense, and bus compatibility intelligence."
     >
       <GlassPanel>
-        <PanelHead title="Charger operational leaderboard" />
+        <PanelHead title="Charger operational leaderboard" sub="Click an unhealthy row to load 30-day KPI trends below" />
         <div className="max-h-[340px] overflow-auto">
           <table className="cc-table w-full text-[12px]">
             <thead>
@@ -246,7 +262,11 @@ export function SectionCharger({
             </thead>
             <tbody>
               {rows.slice(0, 18).map((r) => (
-                <tr key={r.charger_id} className={r.risk !== "healthy" ? "cc-row-alert" : ""}>
+                <tr
+                  key={r.charger_id}
+                  onClick={() => r.risk !== "healthy" && setSelectedChargerId(r.charger_id)}
+                  className={`${r.risk !== "healthy" ? "cc-row-alert cursor-pointer" : ""} ${selectedChargerId === r.charger_id ? "ring-1 ring-inset ring-primary/50" : ""}`}
+                >
                   <td className="px-3 py-2 num font-medium">{r.charger_id}</td>
                   <td className="px-3 py-2">{r.depot_name}</td>
                   <td className={`px-3 py-2 num ${r.utilization_pct > 85 ? "text-warning" : ""}`}>{fmt(r.utilization_pct, 0)}</td>
@@ -262,6 +282,14 @@ export function SectionCharger({
           </table>
         </div>
       </GlassPanel>
+
+      <AbnormalChargerTrendPanel
+        chargers={chargers}
+        leaderboard={rows}
+        variant="glass"
+        selectedChargerId={selectedChargerId}
+        onSelectCharger={setSelectedChargerId}
+      />
 
       <div className="grid gap-4 xl:grid-cols-2">
         <GlassPanel className="p-5">

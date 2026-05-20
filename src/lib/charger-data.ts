@@ -29,6 +29,8 @@ export interface BusOperationalHealthDaily {
   operational_health_score: number;
   abnormality_score: number;
   total_energy_kwh: number;
+  /** Total charging time across sessions that day (minutes) */
+  total_duration_mins: number;
   is_abnormal: boolean;
   /** kWh delivered per 1% SOC gained */
   energy_per_soc_pct: number;
@@ -216,6 +218,8 @@ function buildBusHealth(): BusOperationalHealthDaily[] {
 
       const socDelta = +clamp(35 + r() * 40 - (stressBias ? 8 : 0), 20, 85).toFixed(1);
       const energy = +(sessions * avgPower * (0.8 + r() * 0.6)).toFixed(1);
+      const avgSessionMin = clamp(48 + r() * 72 - stressBias * 0.3, 28, 165);
+      const totalDurationMins = Math.round(sessions * avgSessionMin);
       const energyPerSoc = energy / Math.max(socDelta, 1);
       const acceptRate = clamp(55 + (avgPower / 78) * 40 - stressBias, 25, 99);
       const thermalPerKwh = thermal / Math.max(energy / 100, 0.5);
@@ -236,6 +240,7 @@ function buildBusHealth(): BusOperationalHealthDaily[] {
         operational_health_score: +health.toFixed(1),
         abnormality_score: +abnormality.toFixed(1),
         total_energy_kwh: energy,
+        total_duration_mins: totalDurationMins,
         is_abnormal,
         energy_per_soc_pct: +energyPerSoc.toFixed(2),
         charge_acceptance_rate: +acceptRate.toFixed(1),

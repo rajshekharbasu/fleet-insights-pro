@@ -17,6 +17,7 @@ import { CHART_ENTER } from "@/lib/chart-motion";
 import type { ChargerLeaderboardRow } from "@/lib/charger-analytics";
 import { chargerDailyTrends, fleetMedians } from "@/lib/charger-analytics";
 import type { ChargerHealthDaily } from "@/lib/charger-data";
+import { AbnormalChargerTrendPanel } from "./AbnormalChargerTrendPanel";
 import { fmt, Panel, PanelHeader, RiskBadge, TrendSpark } from "./charger-shared";
 
 export function ChargerHealthSection({
@@ -27,6 +28,7 @@ export function ChargerHealthSection({
   leaderboard: ChargerLeaderboardRow[];
 }) {
   const [q, setQ] = useState("");
+  const [selectedChargerId, setSelectedChargerId] = useState<string | null>(null);
   const medians = useMemo(() => fleetMedians([], chargers), [chargers]);
   const daily = useMemo(() => chargerDailyTrends(chargers), [chargers]);
 
@@ -80,7 +82,11 @@ export function ChargerHealthSection({
             </thead>
             <tbody>
               {filtered.map((r) => (
-                <tr key={r.charger_id} className="border-b border-border/30 hover:bg-muted/30">
+                <tr
+                  key={r.charger_id}
+                  onClick={() => r.risk !== "healthy" && setSelectedChargerId(r.charger_id)}
+                  className={`border-b border-border/30 hover:bg-muted/30 ${r.risk !== "healthy" ? "cursor-pointer" : ""} ${selectedChargerId === r.charger_id ? "bg-primary/8 ring-1 ring-inset ring-primary/40" : ""}`}
+                >
                   <td className="px-3 py-2 num font-medium">{r.charger_id}</td>
                   <td className="px-3 py-2 text-muted-foreground">{r.depot_name}</td>
                   <td className="px-3 py-2 num text-muted-foreground">{r.transformer_id}</td>
@@ -101,6 +107,13 @@ export function ChargerHealthSection({
           </table>
         </div>
       </Panel>
+
+      <AbnormalChargerTrendPanel
+        chargers={chargers}
+        leaderboard={leaderboard}
+        selectedChargerId={selectedChargerId}
+        onSelectCharger={setSelectedChargerId}
+      />
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Panel className="p-5">

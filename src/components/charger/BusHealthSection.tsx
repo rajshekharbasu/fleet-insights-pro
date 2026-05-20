@@ -20,6 +20,7 @@ import type { BusLeaderboardRow } from "@/lib/charger-analytics";
 import { busPeerScatter, busThermalHeatmap, dailyFleetTrends, fleetMedians } from "@/lib/charger-analytics";
 import type { BusOperationalHealthDaily } from "@/lib/charger-data";
 import { MAINTENANCE_RECOMMENDATIONS } from "@/lib/charger-data";
+import { AbnormalBusTrendPanel } from "./AbnormalBusTrendPanel";
 import { fmt, Panel, PanelHeader, RiskBadge, TrendSpark } from "./charger-shared";
 
 const RISK_COLOR = { healthy: "#2dd4bf", warning: "#fbbf24", critical: "#f87171" };
@@ -32,6 +33,7 @@ export function BusHealthSection({
   leaderboard: BusLeaderboardRow[];
 }) {
   const [q, setQ] = useState("");
+  const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const medians = useMemo(() => fleetMedians(buses, []), [buses]);
   const trends = useMemo(() => dailyFleetTrends(buses, []), [buses]);
   const scatter = useMemo(() => busPeerScatter(buses), [buses]);
@@ -81,7 +83,11 @@ export function BusHealthSection({
             </thead>
             <tbody>
               {filtered.map((r) => (
-                <tr key={r.vehicle_id} className="border-b border-border/30 hover:bg-muted/30">
+                <tr
+                  key={r.vehicle_id}
+                  onClick={() => r.risk !== "healthy" && setSelectedBusId(r.vehicle_id)}
+                  className={`border-b border-border/30 hover:bg-muted/30 ${r.risk !== "healthy" ? "cursor-pointer" : ""} ${selectedBusId === r.vehicle_id ? "bg-primary/8 ring-1 ring-inset ring-primary/40" : ""}`}
+                >
                   <td className="px-3 py-2.5 font-medium num">{r.vehicle_number}</td>
                   <td className="px-3 py-2.5 text-muted-foreground">{r.depot_name}</td>
                   <td className="px-3 py-2.5 num">{r.sessions}</td>
@@ -103,6 +109,13 @@ export function BusHealthSection({
           </table>
         </div>
       </Panel>
+
+      <AbnormalBusTrendPanel
+        buses={buses}
+        leaderboard={leaderboard}
+        selectedVehicleId={selectedBusId}
+        onSelectVehicle={setSelectedBusId}
+      />
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Panel className="p-5">

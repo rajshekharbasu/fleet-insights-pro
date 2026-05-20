@@ -980,3 +980,231 @@ export function busLeaderboardExtended(rows: BusOperationalHealthDaily[]): (BusL
     };
   });
 }
+
+/** KPIs plotted for unhealthy buses — 30-day daily series from bus_operational_health_daily. */
+export type BusKpiTrendKey =
+  | "total_energy_kwh"
+  | "total_duration_mins"
+  | "avg_power_kw"
+  | "avg_soc_delta"
+  | "avg_thermal_rise_c"
+  | "operational_health_score"
+  | "abnormality_score";
+
+export const BUS_KPI_TREND_KEYS: BusKpiTrendKey[] = [
+  "total_energy_kwh",
+  "total_duration_mins",
+  "avg_power_kw",
+  "avg_soc_delta",
+  "avg_thermal_rise_c",
+  "operational_health_score",
+  "abnormality_score",
+];
+
+export const BUS_KPI_TREND_META: Record<
+  BusKpiTrendKey,
+  { label: string; unit: string; lowerIsBetter: boolean; pick: (b: BusOperationalHealthDaily) => number }
+> = {
+  total_energy_kwh: {
+    label: "Total energy",
+    unit: "kWh",
+    lowerIsBetter: false,
+    pick: (b) => b.total_energy_kwh,
+  },
+  total_duration_mins: {
+    label: "Total duration",
+    unit: "min",
+    lowerIsBetter: false,
+    pick: (b) => b.total_duration_mins,
+  },
+  avg_power_kw: {
+    label: "Avg power",
+    unit: "kW",
+    lowerIsBetter: false,
+    pick: (b) => b.avg_charging_power_kw,
+  },
+  avg_soc_delta: {
+    label: "Avg SOC delta",
+    unit: "%",
+    lowerIsBetter: false,
+    pick: (b) => b.avg_soc_delta,
+  },
+  avg_thermal_rise_c: {
+    label: "Avg thermal rise",
+    unit: "°C",
+    lowerIsBetter: true,
+    pick: (b) => b.thermal_stress,
+  },
+  operational_health_score: {
+    label: "Operational health",
+    unit: "/100",
+    lowerIsBetter: false,
+    pick: (b) => b.operational_health_score,
+  },
+  abnormality_score: {
+    label: "Abnormality (30D)",
+    unit: "/100",
+    lowerIsBetter: true,
+    pick: (b) => b.abnormality_score,
+  },
+};
+
+export interface BusKpiTrendPoint {
+  date: string;
+  value: number;
+  fleetMedian: number;
+}
+
+export function busKpiTrend30d(
+  rows: BusOperationalHealthDaily[],
+  vehicleId: string,
+  metric: BusKpiTrendKey,
+  dayLimit = 30,
+): BusKpiTrendPoint[] {
+  const pick = BUS_KPI_TREND_META[metric].pick;
+  const dates = [...new Set(rows.map((b) => b.date))].sort().slice(-dayLimit);
+
+  return dates.map((date) => {
+    const dayFleet = rows.filter((b) => b.date === date);
+    const busDay = dayFleet.find((b) => b.vehicle_id === vehicleId);
+    const fleetValues = dayFleet.map(pick);
+    return {
+      date: date.slice(5),
+      value: busDay ? +pick(busDay).toFixed(2) : 0,
+      fleetMedian: fleetValues.length ? +median(fleetValues).toFixed(2) : 0,
+    };
+  });
+}
+
+export function busKpiTrends30d(
+  rows: BusOperationalHealthDaily[],
+  vehicleId: string,
+  dayLimit = 30,
+): Record<BusKpiTrendKey, BusKpiTrendPoint[]> {
+  return Object.fromEntries(
+    BUS_KPI_TREND_KEYS.map((k) => [k, busKpiTrend30d(rows, vehicleId, k, dayLimit)]),
+  ) as Record<BusKpiTrendKey, BusKpiTrendPoint[]>;
+}
+
+/** Buses flagged abnormal in data or breaching health thresholds in the leaderboard. */
+export function abnormalBusRows(
+  daily: BusOperationalHealthDaily[],
+  leaderboard: BusLeaderboardRow[],
+): BusLeaderboardRow[] {
+  const abnormalIds = new Set(
+    daily.filter((b) => b.is_abnormal).map((b) => b.vehicle_id),
+  );
+  return [...leaderboard]
+    .filter((b) => b.risk !== "healthy" || abnormalIds.has(b.vehicle_id))
+    .sort((a, b) => b.abnormality_score - a.abnormality_score);
+}
+
+/** KPIs plotted for unhealthy chargers — 30-day daily series from gold_charger_health_daily. */
+export type ChargerKpiTrendKey =
+  | "total_energy_kwh"
+  | "avg_power_kw"
+  | "avg_duration_mins"
+  | "disconnect_sessions"
+  | "charger_health_score"
+  | "abnormality_score";
+
+export const CHARGER_KPI_TREND_KEYS: ChargerKpiTrendKey[] = [
+  "total_energy_kwh",
+  "avg_power_kw",
+  "avg_duration_mins",
+  "disconnect_sessions",
+  "charger_health_score",
+  "abnormality_score",
+];
+
+export const CHARGER_KPI_TREND_META: Record<
+  ChargerKpiTrendKey,
+  { label: string; unit: string; lowerIsBetter: boolean; pick: (c: ChargerHealthDaily) => number }
+> = {
+  total_energy_kwh: {
+    label: "Total energy",
+    unit: "kWh",
+    lowerIsBetter: false,
+    pick: (c) => c.total_energy_kwh,
+  },
+  avg_power_kw: {
+    label: "Avg power",
+    unit: "kW",
+    lowerIsBetter: false,
+    pick: (c) => c.avg_power_kw,
+  },
+  avg_duration_mins: {
+    label: "Avg duration",
+    unit: "min",
+    lowerIsBetter: false,
+    pick: (c) => c.avg_duration_min,
+  },
+  disconnect_sessions: {
+    label: "Disconnects",
+    unit: "sessions",
+    lowerIsBetter: true,
+    pick: (c) => c.disconnect_sessions,
+  },
+  charger_health_score: {
+    label: "Charger health",
+    unit: "/100",
+    lowerIsBetter: false,
+    pick: (c) => c.health_score,
+  },
+  abnormality_score: {
+    label: "Abnormality (30D)",
+    unit: "/100",
+    lowerIsBetter: true,
+    pick: (c) => c.abnormality_score,
+  },
+};
+
+export interface ChargerKpiTrendPoint {
+  date: string;
+  value: number;
+  fleetMedian: number;
+}
+
+export function chargerKpiTrend30d(
+  rows: ChargerHealthDaily[],
+  chargerId: string,
+  metric: ChargerKpiTrendKey,
+  dayLimit = 30,
+): ChargerKpiTrendPoint[] {
+  const pick = CHARGER_KPI_TREND_META[metric].pick;
+  const dates = [...new Set(rows.map((c) => c.date))].sort().slice(-dayLimit);
+
+  return dates.map((date) => {
+    const dayFleet = rows.filter((c) => c.date === date);
+    const chargerDay = dayFleet.find((c) => c.charger_id === chargerId);
+    const fleetValues = dayFleet.map(pick);
+    return {
+      date: date.slice(5),
+      value: chargerDay ? +pick(chargerDay).toFixed(2) : 0,
+      fleetMedian: fleetValues.length ? +median(fleetValues).toFixed(2) : 0,
+    };
+  });
+}
+
+export function chargerKpiTrends30d(
+  rows: ChargerHealthDaily[],
+  chargerId: string,
+  dayLimit = 30,
+): Record<ChargerKpiTrendKey, ChargerKpiTrendPoint[]> {
+  return Object.fromEntries(
+    CHARGER_KPI_TREND_KEYS.map((k) => [k, chargerKpiTrend30d(rows, chargerId, k, dayLimit)]),
+  ) as Record<ChargerKpiTrendKey, ChargerKpiTrendPoint[]>;
+}
+
+/** Chargers flagged abnormal in data or breaching health thresholds in the leaderboard. */
+export function abnormalChargerRows(
+  daily: ChargerHealthDaily[],
+  leaderboard: ChargerLeaderboardRow[],
+): ChargerLeaderboardRow[] {
+  const abnormalIds = new Set(
+    daily.filter((c) => c.is_abnormal).map((c) => c.charger_id),
+  );
+  return [...leaderboard]
+    .filter((c) => c.risk !== "healthy" || abnormalIds.has(c.charger_id))
+    .sort((a, b) => b.abnormality_score - a.abnormality_score);
+}
