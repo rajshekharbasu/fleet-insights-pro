@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SegmentsRouteImport } from './routes/segments'
 import { Route as RoutesRouteImport } from './routes/routes'
+import { Route as IntelligenceRouteImport } from './routes/intelligence'
 import { Route as FleetRouteImport } from './routes/fleet'
 import { Route as DriversRouteImport } from './routes/drivers'
 import { Route as ChargingRouteImport } from './routes/charging'
@@ -24,6 +25,11 @@ const SegmentsRoute = SegmentsRouteImport.update({
 const RoutesRoute = RoutesRouteImport.update({
   id: '/routes',
   path: '/routes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IntelligenceRoute = IntelligenceRouteImport.update({
+  id: '/intelligence',
+  path: '/intelligence',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FleetRoute = FleetRouteImport.update({
@@ -52,6 +58,7 @@ export interface FileRoutesByFullPath {
   '/charging': typeof ChargingRoute
   '/drivers': typeof DriversRoute
   '/fleet': typeof FleetRoute
+  '/intelligence': typeof IntelligenceRoute
   '/routes': typeof RoutesRoute
   '/segments': typeof SegmentsRoute
 }
@@ -60,6 +67,7 @@ export interface FileRoutesByTo {
   '/charging': typeof ChargingRoute
   '/drivers': typeof DriversRoute
   '/fleet': typeof FleetRoute
+  '/intelligence': typeof IntelligenceRoute
   '/routes': typeof RoutesRoute
   '/segments': typeof SegmentsRoute
 }
@@ -69,20 +77,36 @@ export interface FileRoutesById {
   '/charging': typeof ChargingRoute
   '/drivers': typeof DriversRoute
   '/fleet': typeof FleetRoute
+  '/intelligence': typeof IntelligenceRoute
   '/routes': typeof RoutesRoute
   '/segments': typeof SegmentsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/charging' | '/drivers' | '/fleet' | '/routes' | '/segments'
+  fullPaths:
+    | '/'
+    | '/charging'
+    | '/drivers'
+    | '/fleet'
+    | '/intelligence'
+    | '/routes'
+    | '/segments'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/charging' | '/drivers' | '/fleet' | '/routes' | '/segments'
+  to:
+    | '/'
+    | '/charging'
+    | '/drivers'
+    | '/fleet'
+    | '/intelligence'
+    | '/routes'
+    | '/segments'
   id:
     | '__root__'
     | '/'
     | '/charging'
     | '/drivers'
     | '/fleet'
+    | '/intelligence'
     | '/routes'
     | '/segments'
   fileRoutesById: FileRoutesById
@@ -92,6 +116,7 @@ export interface RootRouteChildren {
   ChargingRoute: typeof ChargingRoute
   DriversRoute: typeof DriversRoute
   FleetRoute: typeof FleetRoute
+  IntelligenceRoute: typeof IntelligenceRoute
   RoutesRoute: typeof RoutesRoute
   SegmentsRoute: typeof SegmentsRoute
 }
@@ -110,6 +135,13 @@ declare module '@tanstack/react-router' {
       path: '/routes'
       fullPath: '/routes'
       preLoaderRoute: typeof RoutesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/intelligence': {
+      id: '/intelligence'
+      path: '/intelligence'
+      fullPath: '/intelligence'
+      preLoaderRoute: typeof IntelligenceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/fleet': {
@@ -148,6 +180,7 @@ const rootRouteChildren: RootRouteChildren = {
   ChargingRoute: ChargingRoute,
   DriversRoute: DriversRoute,
   FleetRoute: FleetRoute,
+  IntelligenceRoute: IntelligenceRoute,
   RoutesRoute: RoutesRoute,
   SegmentsRoute: SegmentsRoute,
 }
