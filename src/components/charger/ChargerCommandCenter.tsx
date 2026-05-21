@@ -2,16 +2,16 @@ import { useMemo } from "react";
 import { Radio } from "lucide-react";
 import { ChargerFilterBar } from "@/components/charger/ChargerFilterBar";
 import { CommandRibbon } from "@/components/charger/command/CommandRibbon";
+import { EnergyFlowSection } from "@/components/charger/command/EnergyFlowSection";
 import {
   SectionBus,
   SectionCharger,
-  SectionDepot,
-  SectionExecutive,
   SectionWarRoom,
 } from "@/components/charger/command/CommandSections";
 import { LivePulse } from "@/components/charger/command/primitives";
 import type { ChargerFilters } from "@/lib/charger-analytics";
 import {
+  applyTrendWindow,
   busLeaderboard,
   chargerLeaderboard,
   commandRibbonKpis,
@@ -23,21 +23,23 @@ import {
   filterDepotRows,
   filterEvents,
 } from "@/lib/charger-analytics";
+import { filterEnergyFlowRows } from "@/lib/charger-explainability";
 import {
   ABNORMALITY_EVENTS,
   BUS_HEALTH_DAILY,
   CHARGER_BUS_COMPATIBILITY,
   CHARGER_HEALTH_DAILY,
+  CHARGING_SESSIONS,
   DEPOT_ENERGY_DAILY,
+  ENERGY_FLOW_INTELLIGENCE,
   MAINTENANCE_RECOMMENDATIONS,
 } from "@/lib/charger-data";
 
+/** Simple 3-tab navigation — energy flow is the hero */
 const NAV = [
-  { id: "bus-intel", label: "Fleet" },
-  { id: "charger-infra", label: "Chargers" },
-  { id: "depot-ops", label: "Depots" },
-  { id: "war-room", label: "War room" },
-  { id: "executive", label: "Executive" },
+  { id: "energy-flow", label: "Energy flow" },
+  { id: "fleet", label: "Fleet health" },
+  { id: "alerts", label: "Alerts" },
 ] as const;
 
 export function ChargerCommandCenter({
@@ -47,9 +49,30 @@ export function ChargerCommandCenter({
   filters: ChargerFilters;
   onFiltersChange: (f: ChargerFilters) => void;
 }) {
-  const buses = useMemo(() => filterBusRows(BUS_HEALTH_DAILY, filters), [filters]);
-  const chargers = useMemo(() => filterChargerRows(CHARGER_HEALTH_DAILY, filters), [filters]);
-  const depots = useMemo(() => filterDepotRows(DEPOT_ENERGY_DAILY, filters), [filters]);
+  const busesRaw = useMemo(() => filterBusRows(BUS_HEALTH_DAILY, filters), [filters]);
+  const chargersRaw = useMemo(() => filterChargerRows(CHARGER_HEALTH_DAILY, filters), [filters]);
+  const depotsRaw = useMemo(() => filterDepotRows(DEPOT_ENERGY_DAILY, filters), [filters]);
+  const flowRaw = useMemo(
+    () => filterEnergyFlowRows(ENERGY_FLOW_INTELLIGENCE, filters),
+    [filters],
+  );
+
+  const buses = useMemo(
+    () => applyTrendWindow(busesRaw, filters.trendWindow),
+    [busesRaw, filters.trendWindow],
+  );
+  const chargers = useMemo(
+    () => applyTrendWindow(chargersRaw, filters.trendWindow),
+    [chargersRaw, filters.trendWindow],
+  );
+  const depots = useMemo(
+    () => applyTrendWindow(depotsRaw, filters.trendWindow),
+    [depotsRaw, filters.trendWindow],
+  );
+  const flow = useMemo(
+    () => applyTrendWindow(flowRaw, filters.trendWindow),
+    [flowRaw, filters.trendWindow],
+  );
 
   const baseKpis = useMemo(() => executiveKpis(buses, chargers, depots), [buses, chargers, depots]);
   const ribbonKpis = useMemo(
@@ -66,63 +89,84 @@ export function ChargerCommandCenter({
   );
 
   return (
-    <div className="command-center space-y-8">
-      <header className="cc-hero relative overflow-hidden rounded-3xl border border-border/40 px-6 py-8">
+    <div className="command-center space-y-6">
+      <header className="cc-hero relative overflow-hidden rounded-2xl border border-border/40 px-5 py-6">
         <div className="cc-hero-grid pointer-events-none absolute inset-0" />
-        <div className="relative flex flex-wrap items-start justify-between gap-4">
+        <div className="relative flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-primary">
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-primary">
               <LivePulse />
-              Charger intelligence command center
+              Charger command center
             </div>
-            <h1 className="mt-2 text-[28px] font-semibold tracking-tight md:text-[32px]">
-              EV fleet energy operations
+            <h1 className="mt-1 text-[24px] font-semibold tracking-tight md:text-[28px]">
+              EV charging operations
             </h1>
-            <p className="mt-2 max-w-xl text-[13px] text-muted-foreground">
-              Real-time charging war-room — bus behavioral intelligence, infrastructure health, depot
-              economics, and live abnormality command.
+            <p className="mt-1 max-w-lg text-[12px] text-muted-foreground">
+              Start with energy flow, then drill into fleet health or live alerts.
             </p>
           </div>
-          <div className="flex items-center gap-2 rounded-full border border-border/50 bg-card/40 px-3 py-1.5 text-[11px] text-muted-foreground">
+          <div className="flex items-center gap-2 rounded-full border border-border/50 bg-card/40 px-3 py-1 text-[11px] text-muted-foreground">
             <Radio className="h-3.5 w-3.5 text-primary" />
-            Gold tables · {filters.from} → {filters.to}
+            {filters.trendWindow} · {filters.from} → {filters.to}
           </div>
         </div>
       </header>
 
       <ChargerFilterBar filters={filters} onChange={onFiltersChange} />
 
-      <nav className="sticky top-[3.25rem] z-30 -mx-1 flex gap-1 overflow-x-auto rounded-xl border border-border/40 bg-background/80 p-1 backdrop-blur-xl">
-        {NAV.map((n) => (
+      <nav className="sticky top-[3.25rem] z-30 flex gap-1 rounded-xl border border-border/40 bg-background/90 p-1 backdrop-blur-xl">
+        {NAV.map((n, i) => (
           <a
             key={n.id}
             href={`#${n.id}`}
-            className="shrink-0 rounded-lg px-3 py-2 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+            className={`flex-1 rounded-lg px-4 py-2.5 text-center text-[12px] font-medium transition-colors ${
+              i === 0
+                ? "bg-primary/15 text-primary"
+                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+            }`}
           >
             {n.label}
           </a>
         ))}
       </nav>
 
-      <section className="cc-ribbon-wrap sticky top-[5.5rem] z-20 rounded-2xl border border-border/30 bg-background/85 p-3 backdrop-blur-xl">
-        <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-          Global command ribbon
+      <section className="cc-ribbon-wrap rounded-2xl border border-border/30 bg-background/85 p-3">
+        <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+          Key metrics
         </div>
-        <CommandRibbon kpis={ribbonKpis} />
+        <CommandRibbon kpis={ribbonKpis.slice(0, 8)} />
       </section>
 
-      <SectionBus buses={buses} maintenance={MAINTENANCE_RECOMMENDATIONS} />
-      <SectionCharger chargers={chargers} compatibility={CHARGER_BUS_COMPATIBILITY} />
-      <SectionDepot depots={depots} />
-      <SectionWarRoom
-        events={events}
+      {/* 1 — Energy flow hero (first thing operators see) */}
+      <EnergyFlowSection
+        flow={flow}
         buses={buses}
-        depots={depots}
-        busRisks={risks.buses}
-        chargerRisks={risks.chargers}
-        depotRisks={risks.depots}
+        chargers={chargers}
+        sessions={CHARGING_SESSIONS}
       />
-      <SectionExecutive kpis={ribbonKpis} busLb={busLb} chargerLb={chargerLb} depotAgg={depotAgg} />
+
+      {/* 2 — Fleet: buses + chargers in one scroll section */}
+      <div id="fleet" className="scroll-mt-28 space-y-6">
+        <SectionBus
+          buses={buses}
+          maintenance={MAINTENANCE_RECOMMENDATIONS}
+          compatibility={CHARGER_BUS_COMPATIBILITY}
+        />
+        <SectionCharger chargers={chargers} compatibility={CHARGER_BUS_COMPATIBILITY} />
+      </div>
+
+      {/* 3 — Alerts */}
+      <div id="alerts" className="scroll-mt-28">
+        <SectionWarRoom
+          events={events}
+          buses={buses}
+          depots={depots}
+          busRisks={risks.buses}
+          chargerRisks={risks.chargers}
+          depotRisks={risks.depots}
+          predictive={[]}
+        />
+      </div>
     </div>
   );
 }

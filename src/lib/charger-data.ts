@@ -439,6 +439,181 @@ function buildChargingSessions(): ChargingSession[] {
   return sessions;
 }
 
+/** gold_charging_curve_analytics — SOC × power profile per session */
+export type CurvePhase = "CC" | "CV" | "taper";
+
+export interface ChargingCurvePoint {
+  soc_pct: number;
+  power_kw: number;
+  current_a: number;
+  voltage_v: number;
+  temperature_c: number;
+  phase: CurvePhase;
+}
+
+export interface ChargingCurveAnalytics {
+  session_id: string;
+  vehicle_id: string;
+  vehicle_number: string;
+  charger_id: string;
+  depot_name: string;
+  date: string;
+  is_reference: boolean;
+  cc_duration_min: number;
+  cv_duration_min: number;
+  cv_entry_soc: number;
+  taper_rate_pct_per_soc: number;
+  charge_acceptance_rate: number;
+  peak_power_kw: number;
+  peak_current_a: number;
+  peak_voltage_v: number;
+  thermal_rise_c: number;
+  curve_stability_score: number;
+  curve_abnormality_score: number;
+  points: ChargingCurvePoint[];
+}
+
+/** gold_energy_flow_intelligence_daily */
+export interface EnergyFlowIntelligenceDaily {
+  date: string;
+  hour: number;
+  depot_id: string;
+  depot_name: string;
+  transformer_id: string;
+  grid_intake_kwh: number;
+  charger_output_kwh: number;
+  bus_demand_kwh: number;
+  delivery_efficiency_pct: number;
+  infrastructure_stress: number;
+  energy_gap_kwh: number;
+}
+
+function curvePhase(soc: number, cvSoc: number): CurvePhase {
+  if (soc >= 92) return "taper";
+  if (soc >= cvSoc) return "CV";
+  return "CC";
+}
+
+function buildCurvePoints(abnormal: boolean, seed: number): ChargingCurvePoint[] {
+  const r = seeded(seed);
+  const peakKw = abnormal ? 52 + r() * 8 : 68 + r() * 12;
+  const cvSoc = abnormal ? 68 + r() * 6 : 78 + r() * 4;
+  const points: ChargingCurvePoint[] = [];
+  for (let soc = 0; soc <= 100; soc += 2) {
+    let power: number;
+    const phase = curvePhase(soc, cvSoc);
+    if (soc < 12) power = (peakKw * soc) / 12;
+    else if (phase === "CC") power = peakKw * (0.96 + r() * 0.04);
+    else if (phase === "CV") {
+      const t = (soc - cvSoc) / Math.max(92 - cvSoc, 1);
+      power = peakKw * (1 - t * (abnormal ? 0.92 : 0.75));
+    } else power = peakKw * (0.08 + (100 - soc) * 0.004);
+
+    const voltage = clamp(380 + soc * 0.9 + r() * 8, 360, 480);
+    const current = (power * 1000) / voltage;
+    const temp = clamp(28 + soc * 0.35 + (phase === "CV" ? 12 : 0) + (abnormal ? 8 : 0) + r() * 4, 26, 72);
+    points.push({
+      soc_pct: soc,
+      power_kw: +power.toFixed(2),
+      current_a: +current.toFixed(1),
+      voltage_v: +voltage.toFixed(0),
+      temperature_c: +temp.toFixed(1),
+      phase,
+    });
+  }
+  return points;
+}
+
+function buildChargingCurves(): ChargingCurveAnalytics[] {
+  const curves: ChargingCurveAnalytics[] = [];
+  let seed = 5555;
+  BUSES.forEach((bus, bi) => {
+    const depot = DEPOTS.find((d) => d.id === bus.depot_id)!;
+    const ch = CHARGERS.find((c) => c.depot_id === bus.depot_id)!;
+    const abnormal = bi % 7 === 0;
+    const r = seeded(seed + bi * 41);
+    const points = buildCurvePoints(abnormal, seed + bi);
+    const cvEntry = points.find((p) => p.phase === "CV")?.soc_pct ?? 78;
+    const peak = Math.max(...points.map((p) => p.power_kw));
+    const ccDur = Math.round(18 + r() * 22 - (abnormal ? 6 : 0));
+    const cvDur = Math.round(35 + r() * 40 + (abnormal ? 12 : 0));
+
+    const base = {
+      vehicle_id: bus.id,
+      vehicle_number: bus.number,
+      charger_id: ch.id,
+      depot_name: depot.name,
+      date: DATES_30[DATES_30.length - 1]!,
+      cc_duration_min: ccDur,
+      cv_duration_min: cvDur,
+      cv_entry_soc: cvEntry,
+      taper_rate_pct_per_soc: +(abnormal ? 2.8 + r() * 0.8 : 1.4 + r() * 0.4).toFixed(2),
+      charge_acceptance_rate: +(abnormal ? 58 + r() * 12 : 78 + r() * 15).toFixed(1),
+      peak_power_kw: +peak.toFixed(1),
+      peak_current_a: +Math.max(...points.map((p) => p.current_a)).toFixed(0),
+      peak_voltage_v: +Math.max(...points.map((p) => p.voltage_v)).toFixed(0),
+      thermal_rise_c: +(abnormal ? 38 + r() * 14 : 22 + r() * 10).toFixed(1),
+      curve_stability_score: +(abnormal ? 48 + r() * 15 : 72 + r() * 20).toFixed(0),
+      curve_abnormality_score: +(abnormal ? 72 + r() * 18 : 18 + r() * 25).toFixed(0),
+    };
+    curves.push({
+      ...base,
+      session_id: `curve_${bus.id}_current`,
+      is_reference: false,
+      points,
+    });
+    const prevPoints = buildCurvePoints(false, seed + bi + 999);
+    curves.push({
+      ...base,
+      session_id: `curve_${bus.id}_previous`,
+      is_reference: true,
+      cv_entry_soc: cvEntry + (abnormal ? 4 : -2),
+      curve_abnormality_score: +(abnormal ? 55 : 15).toFixed(0),
+      points: prevPoints,
+    });
+  });
+  return curves;
+}
+
+function buildEnergyFlow(): EnergyFlowIntelligenceDaily[] {
+  const rows: EnergyFlowIntelligenceDaily[] = [];
+  let seed = 8888;
+  DEPOTS.forEach((depot, di) => {
+    const r = seeded(seed + di * 17);
+    const tx = TRANSFORMERS[di % TRANSFORMERS.length];
+    DATES_30.forEach((date) => {
+      for (let hour = 0; hour < 24; hour += 3) {
+        const peak = hour >= 6 && hour <= 20;
+        const grid = 120 + r() * 180 + (peak ? 80 : 0) + di * 12;
+        const demand = grid * (0.82 + r() * 0.18);
+        const bottleneck = di === 0 && peak && r() > 0.55;
+        const output = bottleneck ? demand * 0.72 : demand * (0.94 + r() * 0.06);
+        const gap = Math.max(0, demand - output);
+        const eff = (output / Math.max(grid, 1)) * 100;
+        const stress = clamp(
+          (gap / Math.max(demand, 1)) * 100 + (peak ? 15 : 0) + di * 3,
+          5,
+          98,
+        );
+        rows.push({
+          date,
+          hour,
+          depot_id: depot.id,
+          depot_name: depot.name,
+          transformer_id: tx,
+          grid_intake_kwh: +grid.toFixed(1),
+          charger_output_kwh: +output.toFixed(1),
+          bus_demand_kwh: +demand.toFixed(1),
+          delivery_efficiency_pct: +eff.toFixed(1),
+          infrastructure_stress: +stress.toFixed(1),
+          energy_gap_kwh: +gap.toFixed(1),
+        });
+      }
+    });
+  });
+  return rows;
+}
+
 export const BUS_HEALTH_DAILY = buildBusHealth();
 export const CHARGER_HEALTH_DAILY = buildChargerHealth();
 export const DEPOT_ENERGY_DAILY = buildDepotEnergy();
@@ -446,6 +621,8 @@ export const CHARGING_SESSIONS = buildChargingSessions();
 export const ABNORMALITY_EVENTS = buildEvents();
 export const MAINTENANCE_RECOMMENDATIONS = buildMaintenance();
 export const CHARGER_BUS_COMPATIBILITY = buildCompatibility();
+export const CHARGING_CURVE_ANALYTICS = buildChargingCurves();
+export const ENERGY_FLOW_INTELLIGENCE = buildEnergyFlow();
 
 export function busRiskLevel(row: { abnormality_score: number; operational_health_score: number }): RiskLevel {
   return riskFromScore(row.abnormality_score, row.operational_health_score);

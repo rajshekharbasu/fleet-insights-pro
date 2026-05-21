@@ -50,6 +50,10 @@ import type {
 } from "@/lib/charger-data";
 import { AbnormalBusTrendPanel } from "@/components/charger/AbnormalBusTrendPanel";
 import { AbnormalChargerTrendPanel } from "@/components/charger/AbnormalChargerTrendPanel";
+import { ExplainableBusIntelligence } from "./ExplainableBusIntelligence";
+import { PredictiveIntel } from "./PredictiveIntel";
+import type { PredictiveCard } from "@/lib/charger-explainability";
+import type { OperationalNarrative } from "@/lib/charger-explainability";
 import {
   fmt,
   GlassPanel,
@@ -64,31 +68,21 @@ const RISK_COLOR = { healthy: "#2dd4bf", warning: "#fbbf24", critical: "#f87171"
 export function SectionBus({
   buses,
   maintenance,
+  compatibility,
 }: {
   buses: BusOperationalHealthDaily[];
   maintenance: MaintenanceRecommendation[];
+  compatibility: ChargerBusCompatibility[];
 }) {
-  const [metric, setMetric] = useState<BusBehaviorMetric>("energy_per_soc");
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const rows = useMemo(() => busLeaderboardExtended(buses), [buses]);
-  const trend = useMemo(() => busBehaviorTrend(buses, metric), [buses, metric]);
-  const stats = useMemo(
-    () => trendSummaryStats(trend.map((t) => ({ ...t, abnormalSessions: 0, abnormalBuses: 0 }))),
-    [trend],
-  );
-  const scatter = useMemo(() => busPeerScatter(buses).map((b) => ({
-    ...b,
-    accept: rows.find((r) => r.vehicle_number === b.vehicle)?.charge_acceptance_rate ?? 70,
-    thermalKwh: rows.find((r) => r.vehicle_number === b.vehicle)?.thermal_rise_per_kwh ?? 1,
-  })), [buses, rows]);
-  const heatmap = useMemo(() => busThermalHeatmap(buses, 10), [buses]);
 
   return (
     <SectionShell
       id="bus-intel"
-      label="Section 01"
-      title="Fleet behavioral intelligence"
-      description="Which buses are degrading — energy per SOC, thermal stress, acceptance rate, and stability vs fleet norms."
+      label="Fleet"
+      title="Bus health"
+      description="Click an unhealthy bus for diagnostics and 30-day KPI trends."
     >
       <GlassPanel>
         <PanelHead title="Fleet health matrix" sub="Click an unhealthy row to load 30-day KPI trends below" />
@@ -124,6 +118,14 @@ export function SectionBus({
         </div>
       </GlassPanel>
 
+      {selectedBusId && (
+        <ExplainableBusIntelligence
+          buses={buses}
+          selectedVehicleId={selectedBusId}
+          compatibility={compatibility}
+        />
+      )}
+
       <AbnormalBusTrendPanel
         buses={buses}
         leaderboard={rows}
@@ -131,102 +133,6 @@ export function SectionBus({
         selectedVehicleId={selectedBusId}
         onSelectVehicle={setSelectedBusId}
       />
-
-      <GlassPanel className="p-5">
-        <PanelHead title="Charging behavioral intelligence" sub="30-day rolling · fleet average overlay" />
-        <div className="mb-3 flex flex-wrap gap-1.5 px-5">
-          {(Object.keys(BUS_BEHAVIOR_META) as BusBehaviorMetric[]).map((k) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => setMetric(k)}
-              className={`rounded-lg px-2.5 py-1.5 text-[11px] font-medium ${metric === k ? "bg-primary text-primary-foreground" : "bg-muted/40 text-muted-foreground"}`}
-            >
-              {BUS_BEHAVIOR_META[k].label}
-            </button>
-          ))}
-        </div>
-        <div className="h-64 px-2">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={trend}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" opacity={0.35} />
-              <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-              <YAxis tick={{ fontSize: 10 }} />
-              <ReferenceLine y={stats.average} stroke="var(--color-primary)" strokeDasharray="5 4" />
-              <ReferenceLine y={stats.median} stroke="var(--color-muted-foreground)" strokeDasharray="3 3" />
-              <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
-              <Area type="monotone" dataKey="value" stroke="var(--color-chart-1)" fill="var(--color-chart-1)" fillOpacity={0.12} strokeWidth={2} {...CHART_ENTER} />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-      </GlassPanel>
-
-      <div className="grid gap-4 xl:grid-cols-2">
-        <GlassPanel className="p-5">
-          <PanelHead title="Peer benchmark" sub="Acceptance vs thermal/kWh · size = energy" />
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                <XAxis type="number" dataKey="accept" name="Accept %" tick={{ fontSize: 10 }} />
-                <YAxis type="number" dataKey="thermalKwh" name="Thermal/kWh" tick={{ fontSize: 10 }} />
-                <ZAxis type="number" dataKey="energy" range={[60, 400]} />
-                <Tooltip contentStyle={{ fontSize: 11 }} />
-                <Scatter data={scatter} shape={(p: { cx?: number; cy?: number; payload?: { risk: keyof typeof RISK_COLOR } }) => (
-                  <circle cx={p.cx} cy={p.cy} r={7} fill={RISK_COLOR[p.payload?.risk ?? "healthy"]} fillOpacity={0.85} />
-                )} />
-              </ScatterChart>
-            </ResponsiveContainer>
-          </div>
-        </GlassPanel>
-        <GlassPanel>
-          <PanelHead title="Thermal heatmap" sub="Persistent stress clusters" />
-          <div className="overflow-x-auto p-4">
-            <table className="text-[10px]">
-              <thead>
-                <tr>
-                  <th className="p-1 text-left">Bus</th>
-                  {heatmap[0]?.days.slice(-14).map((d) => (
-                    <th key={d.date} className="p-0.5 font-normal text-muted-foreground">{d.date}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {heatmap.map((row) => (
-                  <tr key={row.label}>
-                    <td className="p-1 num font-medium">{row.label}</td>
-                    {row.days.slice(-14).map((d) => (
-                      <td key={d.date} className="p-0.5">
-                        <div
-                          className="cc-heat-cell h-4 w-4 rounded-sm"
-                          style={{ opacity: Math.min(1, d.thermal / 100) }}
-                          title={`${d.thermal}`}
-                        />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </GlassPanel>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-2">
-        {maintenance.map((m) => (
-          <GlassPanel key={m.id} className="p-4" glow={m.severity === "critical" ? "critical" : m.severity === "warning" ? "warning" : undefined}>
-            <div className="flex items-center gap-2">
-              <Wrench className="h-4 w-4 text-primary" />
-              <RiskPill level={m.severity} />
-              <span className="text-[10px] uppercase text-muted-foreground">{m.urgency.replace("_", " ")}</span>
-            </div>
-            <h4 className="mt-2 text-[13px] font-semibold">{m.title}</h4>
-            <p className="mt-1 text-[12px] text-muted-foreground">{m.root_cause}</p>
-            <p className="mt-2 text-[11px] text-primary">{m.trend}</p>
-            <p className="mt-1 text-[11px]"><strong>Impact:</strong> {m.impact}</p>
-          </GlassPanel>
-        ))}
-      </div>
     </SectionShell>
   );
 }
@@ -240,13 +146,11 @@ export function SectionCharger({
 }) {
   const [selectedChargerId, setSelectedChargerId] = useState<string | null>(null);
   const rows = useMemo(() => chargerLeaderboardExtended(chargers), [chargers]);
-  const daily = useMemo(() => chargerDailyTrends(chargers), [chargers]);
-
   return (
     <SectionShell
       id="charger-infra"
-      label="Section 02"
-      title="EV infrastructure operations"
+      label="Fleet"
+      title="Charger health"
       description="Charger throughput, utilization, stability, expected expense, and bus compatibility intelligence."
     >
       <GlassPanel>
@@ -291,39 +195,8 @@ export function SectionCharger({
         onSelectCharger={setSelectedChargerId}
       />
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <GlassPanel className="p-5">
-          <PanelHead title="Utilization & throughput" />
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={daily}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.35} />
-                <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                <YAxis yAxisId="l" tick={{ fontSize: 10 }} />
-                <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 10 }} />
-                <Area yAxisId="l" dataKey="sessions" fill="var(--color-primary)" fillOpacity={0.2} stroke="var(--color-primary)" />
-                <Line yAxisId="r" dataKey="energy" stroke="var(--color-chart-3)" strokeWidth={2} dot={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </GlassPanel>
-        <GlassPanel className="p-5">
-          <PanelHead title="Stability analytics" sub="Disconnects & instability proxy" />
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={daily}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.35} />
-                <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                <YAxis tick={{ fontSize: 10 }} />
-                <Bar dataKey="disconnects" fill="var(--color-destructive)" fillOpacity={0.75} radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </GlassPanel>
-      </div>
-
-      <GlassPanel glow="primary">
-        <PanelHead title="Charger–bus compatibility intelligence" sub="Pairing anomalies · operational action list" />
+      <GlassPanel>
+        <PanelHead title="Compatibility issues" sub="Problematic charger–bus pairings" />
         <div className="divide-y divide-border/30">
           {compatibility.slice(0, 8).map((c) => (
             <div key={`${c.charger_id}-${c.vehicle_number}`} className="flex flex-wrap items-center justify-between gap-2 px-5 py-3">
@@ -420,6 +293,7 @@ export function SectionWarRoom({
   busRisks,
   chargerRisks,
   depotRisks,
+  predictive,
 }: {
   events: AbnormalityEvent[];
   buses: BusOperationalHealthDaily[];
@@ -427,15 +301,16 @@ export function SectionWarRoom({
   busRisks: BusLeaderboardRow[];
   chargerRisks: ChargerLeaderboardRow[];
   depotRisks: ReturnType<typeof depotComparison>;
+  predictive: PredictiveCard[];
 }) {
   const trends = useMemo(() => dailyFleetTrends(buses, depots), [buses, depots]);
 
   return (
     <SectionShell
       id="war-room"
-      label="Section 04"
-      title="Live abnormality command center"
-      description="Operational war-room — streaming alerts, risk ranking, degradation trends."
+      label="Alerts"
+      title="Live alerts"
+      description="Operational events and risk ranking."
       action={<span className="inline-flex items-center gap-2 text-[11px] text-primary"><LivePulse /> Live telemetry</span>}
     >
       <div className="grid gap-4 xl:grid-cols-3">
@@ -464,6 +339,7 @@ export function SectionWarRoom({
             {[
               { title: "Buses", items: busRisks, label: (x: BusLeaderboardRow) => x.vehicle_number, score: (x: BusLeaderboardRow) => x.abnormality_score },
               { title: "Chargers", items: chargerRisks, label: (x: ChargerLeaderboardRow) => x.charger_id, score: (x: ChargerLeaderboardRow) => x.abnormality_score },
+              { title: "Depots", items: depotRisks, label: (x: (typeof depotRisks)[0]) => x.depot, score: (x: (typeof depotRisks)[0]) => x.anomalies },
             ].map((col) => (
               <div key={col.title}>
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{col.title}</div>
@@ -496,36 +372,40 @@ export function SectionWarRoom({
           </ResponsiveContainer>
         </div>
       </GlassPanel>
+      <PredictiveIntel cards={predictive} />
     </SectionShell>
   );
 }
 
-export function SectionExecutive({ kpis, busLb, chargerLb, depotAgg }: {
+export function SectionExecutive({
+  narratives,
+  kpis,
+  busLb,
+  chargerLb,
+  depotAgg,
+}: {
+  narratives: OperationalNarrative[];
   kpis: CommandKpiCard[];
   busLb: BusLeaderboardRow[];
   chargerLb: ChargerLeaderboardRow[];
   depotAgg: ReturnType<typeof depotComparison>;
 }) {
-  const insights = [
-    { title: "Depot Khapri delivered 21% higher energy this month", body: "Throughput exceeds fleet median with stable transformer headroom.", tone: "primary" as const },
-    { title: "Charger TV-KHA-12 shows worsening disconnect instability", body: "14d disconnect trend +340% vs fleet — firmware intervention queued.", tone: "warning" as const },
-    { title: "Fleet operational stability improved 8.3% over 30 days", body: `Health score now ${kpis.find((k) => k.id === "fleet_health")?.value ?? "—"}/100 with fewer thermal flags.`, tone: "success" as const },
-    { title: "Bus 1107 thermal stress indicates elevated maintenance risk", body: "Thermal/kWh trend ↑ 18% — schedule pack inspection.", tone: "destructive" as const },
-  ];
+  const toneMap = { healthy: "primary" as const, warning: "warning" as const, critical: "critical" as const };
 
   return (
     <SectionShell
       id="executive"
       label="Section 05"
-      title="Executive intelligence"
-      description="AI-synthesized operational narrative for leadership."
+      title="Operational explainability & executive synthesis"
+      description="Data-driven narratives and leadership summary tiles."
     >
       <div className="grid gap-3 md:grid-cols-2">
-        {insights.map((ins) => (
-          <GlassPanel key={ins.title} className="p-4" glow={ins.tone === "destructive" ? "critical" : ins.tone === "warning" ? "warning" : "primary"}>
-            <div className="text-[10px] uppercase tracking-wider text-primary">AI insight</div>
+        {narratives.slice(0, 4).map((ins) => (
+          <GlassPanel key={ins.id} className="p-4" glow={toneMap[ins.severity] === "primary" ? "primary" : toneMap[ins.severity]}>
+            <div className="text-[10px] uppercase tracking-wider text-primary">Operational narrative</div>
             <h4 className="mt-1 text-[14px] font-semibold">{ins.title}</h4>
             <p className="mt-1 text-[12px] text-muted-foreground">{ins.body}</p>
+            {ins.action && <p className="mt-2 text-[11px] text-primary">→ {ins.action}</p>}
           </GlassPanel>
         ))}
       </div>
