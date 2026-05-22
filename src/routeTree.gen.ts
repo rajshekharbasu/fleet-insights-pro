@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SegmentsRouteImport } from './routes/segments'
 import { Route as RoutesRouteImport } from './routes/routes'
+import { Route as ReadinessRouteImport } from './routes/readiness'
 import { Route as IntelligenceRouteImport } from './routes/intelligence'
 import { Route as FleetRouteImport } from './routes/fleet'
 import { Route as DriversRouteImport } from './routes/drivers'
@@ -25,6 +26,11 @@ const SegmentsRoute = SegmentsRouteImport.update({
 const RoutesRoute = RoutesRouteImport.update({
   id: '/routes',
   path: '/routes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReadinessRoute = ReadinessRouteImport.update({
+  id: '/readiness',
+  path: '/readiness',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IntelligenceRoute = IntelligenceRouteImport.update({
@@ -59,6 +65,7 @@ export interface FileRoutesByFullPath {
   '/drivers': typeof DriversRoute
   '/fleet': typeof FleetRoute
   '/intelligence': typeof IntelligenceRoute
+  '/readiness': typeof ReadinessRoute
   '/routes': typeof RoutesRoute
   '/segments': typeof SegmentsRoute
 }
@@ -68,6 +75,7 @@ export interface FileRoutesByTo {
   '/drivers': typeof DriversRoute
   '/fleet': typeof FleetRoute
   '/intelligence': typeof IntelligenceRoute
+  '/readiness': typeof ReadinessRoute
   '/routes': typeof RoutesRoute
   '/segments': typeof SegmentsRoute
 }
@@ -78,6 +86,7 @@ export interface FileRoutesById {
   '/drivers': typeof DriversRoute
   '/fleet': typeof FleetRoute
   '/intelligence': typeof IntelligenceRoute
+  '/readiness': typeof ReadinessRoute
   '/routes': typeof RoutesRoute
   '/segments': typeof SegmentsRoute
 }
@@ -89,6 +98,7 @@ export interface FileRouteTypes {
     | '/drivers'
     | '/fleet'
     | '/intelligence'
+    | '/readiness'
     | '/routes'
     | '/segments'
   fileRoutesByTo: FileRoutesByTo
@@ -98,6 +108,7 @@ export interface FileRouteTypes {
     | '/drivers'
     | '/fleet'
     | '/intelligence'
+    | '/readiness'
     | '/routes'
     | '/segments'
   id:
@@ -107,6 +118,7 @@ export interface FileRouteTypes {
     | '/drivers'
     | '/fleet'
     | '/intelligence'
+    | '/readiness'
     | '/routes'
     | '/segments'
   fileRoutesById: FileRoutesById
@@ -117,6 +129,7 @@ export interface RootRouteChildren {
   DriversRoute: typeof DriversRoute
   FleetRoute: typeof FleetRoute
   IntelligenceRoute: typeof IntelligenceRoute
+  ReadinessRoute: typeof ReadinessRoute
   RoutesRoute: typeof RoutesRoute
   SegmentsRoute: typeof SegmentsRoute
 }
@@ -135,6 +148,13 @@ declare module '@tanstack/react-router' {
       path: '/routes'
       fullPath: '/routes'
       preLoaderRoute: typeof RoutesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/readiness': {
+      id: '/readiness'
+      path: '/readiness'
+      fullPath: '/readiness'
+      preLoaderRoute: typeof ReadinessRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/intelligence': {
@@ -181,19 +201,10 @@ const rootRouteChildren: RootRouteChildren = {
   DriversRoute: DriversRoute,
   FleetRoute: FleetRoute,
   IntelligenceRoute: IntelligenceRoute,
+  ReadinessRoute: ReadinessRoute,
   RoutesRoute: RoutesRoute,
   SegmentsRoute: SegmentsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
