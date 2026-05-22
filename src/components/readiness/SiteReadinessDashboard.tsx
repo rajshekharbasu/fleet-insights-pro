@@ -78,6 +78,10 @@ export function SiteReadinessDashboard() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [siteFilter, setSiteFilter] = useState<Site | "all">("all");
 
+  const { cfg, getCell, setCell, addColumn, removeColumn, getCustomValue, setCustomValue, reset } = useReadinessConfig();
+  const [editing, setEditing] = useState<{ itemId: number; itemName: string; site: Site } | null>(null);
+  const [columnsOpen, setColumnsOpen] = useState(false);
+
   const filtered = useMemo(() => {
     return READINESS_ITEMS.filter((r) => {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
@@ -295,6 +299,15 @@ export function SiteReadinessDashboard() {
             <div className="hidden items-center gap-1.5 rounded-lg bg-muted/40 px-2 py-1 text-[10.5px] text-muted-foreground md:flex">
               <Filter className="h-3 w-3" /> {filtered.length} rows
             </div>
+            <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => setColumnsOpen(true)}>
+              <Settings2 className="h-3.5 w-3.5" /> Manage columns
+            </Button>
+            <Button
+              variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground"
+              onClick={() => { if (confirm("Reset all overrides and custom columns?")) reset(); }}
+            >
+              <RotateCcw className="h-3.5 w-3.5" /> Reset
+            </Button>
           </div>
         </div>
         <div className="overflow-x-auto">
