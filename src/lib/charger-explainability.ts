@@ -382,6 +382,130 @@ export function chargingCurveOverlays(
   return { current, previous, fleet, series, metrics: current };
 }
 
+export interface ChargerOperationalStory {
+  chargerId: string;
+  depotName: string;
+  transformerId: string;
+  currentHealth: number;
+  previousHealth: number;
+  healthDelta: number;
+  abnormalityScore: number;
+  severity: RiskLevel;
+  whyChanged: string[];
+  diagnostics: { label: string; detail: string; severity: RiskLevel }[];
+  representativeBus?: string;
+}
+
+export function chargerOperationalStory(
+  chargers: ChargerHealthDaily[],
+  chargerId: string,
+): ChargerOperationalStory | null {
+  const rows = chargers.filter((c) => c.charger_id === chargerId).sort((a, b) => a.date.localeCompare(b.date));
+  if (!rows.length) return null;
+  const latest = rows[rows.length - 1]!;
+  const prev = rows[rows.length - 2] ?? latest;
+  const healthDelta = latest.health_score - prev.health_score;
+  const why: string[] = [];
+  const diagnostics: ChargerOperationalStory["diagnostics"] = [];
+
+  if (latest.disconnect_sessions > prev.disconnect_sessions) {
+    why.push("Disconnect frequency increasing on this charger");
+    diagnostics.push({
+      label: "Disconnects",
+      detail: `${latest.disconnect_sessions} disconnects in latest day vs ${prev.disconnect_sessions} prior`,
+      severity: latest.disconnect_sessions >= 3 ? "critical" : "warning",
+    });
+  }
+  if (latest.avg_power_kw < prev.avg_power_kw - 4) {
+    why.push("Average delivery power declining");
+    diagnostics.push({
+      label: "Avg power",
+      detail: `${latest.avg_power_kw.toFixed(1)} kW — below prior ${prev.avg_power_kw.toFixed(1)} kW`,
+      severity: "warning",
+    });
+  }
+  if (latest.utilization_pct > 88) {
+    why.push("High utilization may be saturating output");
+    diagnostics.push({
+      label: "Utilization",
+      detail: `${latest.utilization_pct.toFixed(0)}% — congestion risk during peak windows`,
+      severity: "warning",
+    });
+  }
+  if (latest.abnormality_score > 55) {
+    why.push("Curve and session stability degrading vs fleet");
+    diagnostics.push({
+      label: "Abnormality",
+      detail: `Score ${latest.abnormality_score.toFixed(0)}/100 on latest operational day`,
+      severity: latest.abnormality_score >= 72 ? "critical" : "warning",
+    });
+  }
+  if (!why.length) {
+    why.push("Charger metrics within variance — review paired bus behavior on curve overlay");
+  }
+
+  const severity: RiskLevel =
+    latest.abnormality_score >= 72 || latest.health_score < 45
+      ? "critical"
+      : latest.abnormality_score >= 48 || latest.health_score < 62
+        ? "warning"
+        : "healthy";
+
+  const repCurve = CHARGING_CURVE_ANALYTICS.filter(
+    (c) => c.charger_id === chargerId && !c.is_reference,
+  ).sort((a, b) => b.curve_abnormality_score - a.curve_abnormality_score)[0];
+
+  return {
+    chargerId,
+    depotName: latest.depot_name,
+    transformerId: latest.transformer_id,
+    currentHealth: latest.health_score,
+    previousHealth: prev.health_score,
+    healthDelta,
+    abnormalityScore: latest.abnormality_score,
+    severity,
+    whyChanged: why,
+    diagnostics,
+    representativeBus: repCurve?.vehicle_number,
+  };
+}
+
+/** Representative session curve for a charger (highest abnormality bus on that charger). */
+export function chargingCurveOverlaysForCharger(chargerId: string): ReturnType<typeof chargingCurveOverlays> {
+  const candidates = CHARGING_CURVE_ANALYTICS.filter(
+    (c) => c.charger_id === chargerId && !c.is_reference,
+  );
+  const current =
+    [...candidates].sort((a, b) => b.curve_abnormality_score - a.curve_abnormality_score)[0] ?? null;
+  if (!current) {
+    return { current: null, previous: null, fleet: fleetAvgCurve(), series: [], metrics: null };
+  }
+  const previous =
+    CHARGING_CURVE_ANALYTICS.find(
+      (c) => c.charger_id === chargerId && c.is_reference && c.vehicle_id === current.vehicle_id,
+    ) ??
+    CHARGING_CURVE_ANALYTICS.find((c) => c.charger_id === chargerId && c.is_reference) ??
+    null;
+  const fleet = fleetAvgCurve();
+  const socSet = new Set<number>();
+  [current, previous, { points: fleet }].forEach((c) => c?.points.forEach((p) => socSet.add(p.soc_pct)));
+  const series: CurveOverlaySeries[] = [...socSet].sort((a, b) => a - b).map((soc_pct) => {
+    const cPt = current.points.find((p) => p.soc_pct === soc_pct);
+    const pPt = previous?.points.find((p) => p.soc_pct === soc_pct);
+    const fPt = fleet.find((p) => p.soc_pct === soc_pct);
+    return {
+      soc_pct,
+      current: cPt?.power_kw,
+      previous: pPt?.power_kw,
+      fleet: fPt?.power_kw,
+      temperature: cPt?.temperature_c,
+      current_a: cPt?.current_a,
+      voltage_v: cPt?.voltage_v,
+    };
+  });
+  return { current, previous, fleet, series, metrics: current };
+}
+
 export interface CurveExplainMetric {
   key: string;
   label: string;

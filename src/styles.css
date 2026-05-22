@@ -536,6 +536,20 @@
   min-height: 280px;
 }
 
+.cc-energy-sync-live {
+  animation: cc-sync-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes cc-sync-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
 .cc-flow-node {
   animation: cc-pulse 2.8s ease-in-out infinite;
 }

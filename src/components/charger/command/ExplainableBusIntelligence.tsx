@@ -30,10 +30,12 @@ export function ExplainableBusIntelligence({
   buses,
   selectedVehicleId,
   compatibility,
+  highlightDrill,
 }: {
   buses: BusOperationalHealthDaily[];
   selectedVehicleId: string | null;
   compatibility: ChargerBusCompatibility[];
+  highlightDrill?: boolean;
 }) {
   const story = useMemo(
     () => (selectedVehicleId ? busOperationalStory(buses, selectedVehicleId) : null),
@@ -66,13 +68,17 @@ export function ExplainableBusIntelligence({
   return (
     <AnimatePresence mode="wait">
       <motion.div
+        id="bus-intel-drill"
         key={selectedVehicleId}
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -8 }}
         transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-        className="space-y-4"
+        className={`scroll-mt-28 space-y-4 ${highlightDrill ? "rounded-2xl ring-2 ring-primary/40 ring-offset-2 ring-offset-background" : ""}`}
       >
+        {highlightDrill && (
+          <p className="text-[11px] font-medium text-primary">Opened from risk ranking · investigate bus</p>
+        )}
         <GlassPanel className="overflow-hidden border-primary/25">
           <PanelHead
             title={`Bus ${story.vehicleNumber} — operational story`}

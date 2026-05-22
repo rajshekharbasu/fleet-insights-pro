@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   Area,
   Bar,
@@ -51,6 +51,7 @@ import type {
 import { AbnormalBusTrendPanel } from "@/components/charger/AbnormalBusTrendPanel";
 import { AbnormalChargerTrendPanel } from "@/components/charger/AbnormalChargerTrendPanel";
 import { ExplainableBusIntelligence } from "./ExplainableBusIntelligence";
+import { ExplainableChargerIntelligence } from "./ExplainableChargerIntelligence";
 import { PredictiveIntel } from "./PredictiveIntel";
 import type { PredictiveCard } from "@/lib/charger-explainability";
 import type { OperationalNarrative } from "@/lib/charger-explainability";
@@ -69,12 +70,17 @@ export function SectionBus({
   buses,
   maintenance,
   compatibility,
+  selectedBusId,
+  onSelectBus,
+  highlightDrillBusId,
 }: {
   buses: BusOperationalHealthDaily[];
   maintenance: MaintenanceRecommendation[];
   compatibility: ChargerBusCompatibility[];
+  selectedBusId: string | null;
+  onSelectBus: (vehicleId: string | null) => void;
+  highlightDrillBusId?: string | null;
 }) {
-  const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const rows = useMemo(() => busLeaderboardExtended(buses), [buses]);
 
   return (
@@ -99,7 +105,7 @@ export function SectionBus({
               {rows.slice(0, 20).map((r) => (
                 <tr
                   key={r.vehicle_id}
-                  onClick={() => r.risk !== "healthy" && setSelectedBusId(r.vehicle_id)}
+                  onClick={() => r.risk !== "healthy" && onSelectBus(r.vehicle_id)}
                   className={`cc-row ${r.risk !== "healthy" ? "cc-row-alert cursor-pointer" : ""} ${selectedBusId === r.vehicle_id ? "ring-1 ring-inset ring-primary/50" : ""}`}
                 >
                   <td className="px-3 py-2 font-medium num">{r.vehicle_number}</td>
@@ -123,6 +129,7 @@ export function SectionBus({
           buses={buses}
           selectedVehicleId={selectedBusId}
           compatibility={compatibility}
+          highlightDrill={highlightDrillBusId === selectedBusId}
         />
       )}
 
@@ -131,7 +138,7 @@ export function SectionBus({
         leaderboard={rows}
         variant="glass"
         selectedVehicleId={selectedBusId}
-        onSelectVehicle={setSelectedBusId}
+        onSelectVehicle={onSelectBus}
       />
     </SectionShell>
   );
@@ -140,11 +147,16 @@ export function SectionBus({
 export function SectionCharger({
   chargers,
   compatibility,
+  selectedChargerId,
+  onSelectCharger,
+  highlightDrillChargerId,
 }: {
   chargers: ChargerHealthDaily[];
   compatibility: ChargerBusCompatibility[];
+  selectedChargerId: string | null;
+  onSelectCharger: (chargerId: string | null) => void;
+  highlightDrillChargerId?: string | null;
 }) {
-  const [selectedChargerId, setSelectedChargerId] = useState<string | null>(null);
   const rows = useMemo(() => chargerLeaderboardExtended(chargers), [chargers]);
   return (
     <SectionShell
@@ -168,7 +180,7 @@ export function SectionCharger({
               {rows.slice(0, 18).map((r) => (
                 <tr
                   key={r.charger_id}
-                  onClick={() => r.risk !== "healthy" && setSelectedChargerId(r.charger_id)}
+                  onClick={() => r.risk !== "healthy" && onSelectCharger(r.charger_id)}
                   className={`${r.risk !== "healthy" ? "cc-row-alert cursor-pointer" : ""} ${selectedChargerId === r.charger_id ? "ring-1 ring-inset ring-primary/50" : ""}`}
                 >
                   <td className="px-3 py-2 num font-medium">{r.charger_id}</td>
@@ -187,12 +199,21 @@ export function SectionCharger({
         </div>
       </GlassPanel>
 
+      {selectedChargerId && (
+        <ExplainableChargerIntelligence
+          chargers={chargers}
+          selectedChargerId={selectedChargerId}
+          compatibility={compatibility}
+          highlightDrill={highlightDrillChargerId === selectedChargerId}
+        />
+      )}
+
       <AbnormalChargerTrendPanel
         chargers={chargers}
         leaderboard={rows}
         variant="glass"
         selectedChargerId={selectedChargerId}
-        onSelectCharger={setSelectedChargerId}
+        onSelectCharger={onSelectCharger}
       />
 
       <GlassPanel>
@@ -294,6 +315,9 @@ export function SectionWarRoom({
   chargerRisks,
   depotRisks,
   predictive,
+  onDrillBus,
+  onDrillCharger,
+  onDrillFromEvent,
 }: {
   events: AbnormalityEvent[];
   buses: BusOperationalHealthDaily[];
@@ -302,6 +326,9 @@ export function SectionWarRoom({
   chargerRisks: ChargerLeaderboardRow[];
   depotRisks: ReturnType<typeof depotComparison>;
   predictive: PredictiveCard[];
+  onDrillBus: (vehicleId: string) => void;
+  onDrillCharger: (chargerId: string) => void;
+  onDrillFromEvent: (event: AbnormalityEvent) => void;
 }) {
   const trends = useMemo(() => dailyFleetTrends(buses, depots), [buses, depots]);
 
@@ -317,42 +344,83 @@ export function SectionWarRoom({
         <GlassPanel className="xl:col-span-2" glow="critical">
           <PanelHead title="Operational alert feed" sub="Severity-ranked events" />
           <div className="max-h-[320px] divide-y divide-border/30 overflow-auto">
-            {events.map((e) => (
-              <div key={e.id} className="flex gap-3 px-5 py-3">
-                <AlertTriangle className={`mt-0.5 h-4 w-4 shrink-0 ${e.severity === "critical" ? "text-destructive" : "text-warning"}`} />
-                <div>
-                  <div className="flex items-center gap-2">
-                    <RiskPill level={e.severity} />
-                    <span className="text-[10px] text-muted-foreground num">{new Date(e.timestamp).toLocaleString()}</span>
+            {events.map((e) => {
+              const drillable = e.entity_type === "bus" || e.entity_type === "charger";
+              return (
+                <button
+                  key={e.id}
+                  type="button"
+                  disabled={!drillable}
+                  onClick={() => drillable && onDrillFromEvent(e)}
+                  className={`flex w-full gap-3 px-5 py-3 text-left transition-colors ${
+                    drillable ? "hover:bg-muted/30 cursor-pointer" : "cursor-default"
+                  }`}
+                >
+                  <AlertTriangle className={`mt-0.5 h-4 w-4 shrink-0 ${e.severity === "critical" ? "text-destructive" : "text-warning"}`} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <RiskPill level={e.severity} />
+                      <span className="text-[10px] text-muted-foreground num">{new Date(e.timestamp).toLocaleString()}</span>
+                    </div>
+                    <div className="mt-1 font-medium">{e.entity_label}</div>
+                    <p className="text-[12px] text-muted-foreground">{e.message}</p>
+                    <p className="mt-1 text-[11px] text-primary">
+                      {drillable ? "Investigate → opens story, curve & root cause" : `→ ${e.recommended_action}`}
+                    </p>
                   </div>
-                  <div className="mt-1 font-medium">{e.entity_label}</div>
-                  <p className="text-[12px] text-muted-foreground">{e.message}</p>
-                  <p className="mt-1 text-[11px] text-primary">→ {e.recommended_action}</p>
-                </div>
-              </div>
-            ))}
+                </button>
+              );
+            })}
           </div>
         </GlassPanel>
         <GlassPanel>
-          <PanelHead title="Risk ranking" />
+          <PanelHead title="Risk ranking" sub="Click a bus or charger to open operational story & curve" />
           <div className="space-y-4 p-4 pt-0">
-            {[
-              { title: "Buses", items: busRisks, label: (x: BusLeaderboardRow) => x.vehicle_number, score: (x: BusLeaderboardRow) => x.abnormality_score },
-              { title: "Chargers", items: chargerRisks, label: (x: ChargerLeaderboardRow) => x.charger_id, score: (x: ChargerLeaderboardRow) => x.abnormality_score },
-              { title: "Depots", items: depotRisks, label: (x: (typeof depotRisks)[0]) => x.depot, score: (x: (typeof depotRisks)[0]) => x.anomalies },
-            ].map((col) => (
-              <div key={col.title}>
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{col.title}</div>
-                <ol className="mt-1 space-y-1">
-                  {col.items.slice(0, 4).map((item, i) => (
-                    <li key={i} className="flex justify-between text-[12px]">
-                      <span>{col.label(item as never)}</span>
-                      <span className="num text-destructive">{fmt(col.score(item as never), 0)}</span>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            ))}
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Buses</div>
+              <ol className="mt-1 space-y-0.5">
+                {busRisks.slice(0, 4).map((item) => (
+                  <li key={item.vehicle_id}>
+                    <button
+                      type="button"
+                      onClick={() => onDrillBus(item.vehicle_id)}
+                      className="flex w-full items-center justify-between rounded-md px-1 py-1.5 text-left text-[12px] transition-colors hover:bg-primary/10 hover:text-primary"
+                    >
+                      <span className="num font-medium">{item.vehicle_number}</span>
+                      <span className="num text-destructive">{fmt(item.abnormality_score, 0)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Chargers</div>
+              <ol className="mt-1 space-y-0.5">
+                {chargerRisks.slice(0, 4).map((item) => (
+                  <li key={item.charger_id}>
+                    <button
+                      type="button"
+                      onClick={() => onDrillCharger(item.charger_id)}
+                      className="flex w-full items-center justify-between rounded-md px-1 py-1.5 text-left text-[12px] transition-colors hover:bg-primary/10 hover:text-primary"
+                    >
+                      <span className="font-medium">{item.charger_id}</span>
+                      <span className="num text-destructive">{fmt(item.abnormality_score, 0)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Depots</div>
+              <ol className="mt-1 space-y-1">
+                {depotRisks.slice(0, 4).map((item, i) => (
+                  <li key={i} className="flex justify-between text-[12px] text-muted-foreground">
+                    <span>{item.depot}</span>
+                    <span className="num">{fmt(item.anomalies, 0)}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
           </div>
         </GlassPanel>
       </div>

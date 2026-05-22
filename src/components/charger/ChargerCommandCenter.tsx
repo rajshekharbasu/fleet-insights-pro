@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Radio } from "lucide-react";
 import { ChargerFilterBar } from "@/components/charger/ChargerFilterBar";
 import { CommandRibbon } from "@/components/charger/command/CommandRibbon";
@@ -24,6 +24,11 @@ import {
   filterEvents,
 } from "@/lib/charger-analytics";
 import { filterEnergyFlowRows } from "@/lib/charger-explainability";
+import {
+  fleetDrillFromEvent,
+  scrollToFleetDrill,
+} from "@/lib/fleet-drill";
+import type { AbnormalityEvent } from "@/lib/charger-data";
 import {
   ABNORMALITY_EVENTS,
   BUS_HEALTH_DAILY,
@@ -88,6 +93,49 @@ export function ChargerCommandCenter({
     [busLb, chargerLb, depotAgg],
   );
 
+  const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
+  const [selectedChargerId, setSelectedChargerId] = useState<string | null>(null);
+  const [highlightDrillBusId, setHighlightDrillBusId] = useState<string | null>(null);
+  const [highlightDrillChargerId, setHighlightDrillChargerId] = useState<string | null>(null);
+
+  const drillToBus = useCallback((vehicleId: string) => {
+    setSelectedChargerId(null);
+    setHighlightDrillChargerId(null);
+    setSelectedBusId(vehicleId);
+    setHighlightDrillBusId(vehicleId);
+    scrollToFleetDrill({ type: "bus", vehicleId });
+  }, []);
+
+  const drillToCharger = useCallback((chargerId: string) => {
+    setSelectedBusId(null);
+    setHighlightDrillBusId(null);
+    setSelectedChargerId(chargerId);
+    setHighlightDrillChargerId(chargerId);
+    scrollToFleetDrill({ type: "charger", chargerId });
+  }, []);
+
+  const drillFromEvent = useCallback(
+    (event: AbnormalityEvent) => {
+      const target = fleetDrillFromEvent(event, buses);
+      if (!target) return;
+      if (target.type === "bus") drillToBus(target.vehicleId);
+      else drillToCharger(target.chargerId);
+    },
+    [buses, drillToBus, drillToCharger],
+  );
+
+  const selectBus = useCallback((vehicleId: string | null) => {
+    setHighlightDrillBusId(null);
+    setSelectedBusId(vehicleId);
+    if (vehicleId) setSelectedChargerId(null);
+  }, []);
+
+  const selectCharger = useCallback((chargerId: string | null) => {
+    setHighlightDrillChargerId(null);
+    setSelectedChargerId(chargerId);
+    if (chargerId) setSelectedBusId(null);
+  }, []);
+
   return (
     <div className="command-center space-y-6">
       <header className="cc-hero relative overflow-hidden rounded-2xl border border-border/40 px-5 py-6">
@@ -151,8 +199,17 @@ export function ChargerCommandCenter({
           buses={buses}
           maintenance={MAINTENANCE_RECOMMENDATIONS}
           compatibility={CHARGER_BUS_COMPATIBILITY}
+          selectedBusId={selectedBusId}
+          onSelectBus={selectBus}
+          highlightDrillBusId={highlightDrillBusId}
         />
-        <SectionCharger chargers={chargers} compatibility={CHARGER_BUS_COMPATIBILITY} />
+        <SectionCharger
+          chargers={chargers}
+          compatibility={CHARGER_BUS_COMPATIBILITY}
+          selectedChargerId={selectedChargerId}
+          onSelectCharger={selectCharger}
+          highlightDrillChargerId={highlightDrillChargerId}
+        />
       </div>
 
       {/* 3 — Alerts */}
@@ -165,6 +222,9 @@ export function ChargerCommandCenter({
           chargerRisks={risks.chargers}
           depotRisks={risks.depots}
           predictive={[]}
+          onDrillBus={drillToBus}
+          onDrillCharger={drillToCharger}
+          onDrillFromEvent={drillFromEvent}
         />
       </div>
     </div>
