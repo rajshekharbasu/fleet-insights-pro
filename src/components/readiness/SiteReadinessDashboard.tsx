@@ -320,6 +320,9 @@ export function SiteReadinessDashboard() {
                 <th className="px-2 py-2.5">Priority</th>
                 <th className="px-2 py-2.5">Deadline</th>
                 <th className="px-2 py-2.5">Status</th>
+                {cfg.customColumns.map((c) => (
+                  <th key={c.id} className="px-2 py-2.5">{c.label}</th>
+                ))}
                 {SITES.map((s) => (
                   <th key={s} className="px-1.5 py-2.5 text-center">{s}</th>
                 ))}
@@ -353,9 +356,37 @@ export function SiteReadinessDashboard() {
                         {r.status}
                       </span>
                     </td>
-                    {SITES.map((s) => (
-                      <td key={s} className="px-1.5 py-2 text-center"><CellBadge v={r.cells[s]} /></td>
+                    {cfg.customColumns.map((c) => (
+                      <td key={c.id} className="px-2 py-2">
+                        <input
+                          type={c.type === "date" ? "date" : c.type === "number" ? "number" : "text"}
+                          value={getCustomValue(r.id, c.id)}
+                          onChange={(e) => setCustomValue(r.id, c.id, e.target.value)}
+                          className="h-7 w-full min-w-[110px] rounded-md border border-border/40 bg-background/40 px-2 text-[11.5px] outline-none focus:border-primary/40"
+                        />
+                      </td>
                     ))}
+                    {SITES.map((s) => {
+                      const cell = getCell(r.id, s);
+                      return (
+                        <td key={s} className="px-1.5 py-2 text-center align-middle">
+                          <button
+                            type="button"
+                            onClick={() => setEditing({ itemId: r.id, itemName: r.item, site: s })}
+                            className="group/cell inline-flex flex-col items-center gap-1 rounded-md p-0.5 transition hover:bg-muted/40"
+                            title="Click to configure"
+                          >
+                            <EditableCellBadge state={cell} />
+                            {cell.status !== "yes" && cell.deadline && (
+                              <DeadlineChip iso={cell.deadline} />
+                            )}
+                            {cell.notes && (
+                              <MessageSquare className="h-2.5 w-2.5 text-muted-foreground/60" />
+                            )}
+                          </button>
+                        </td>
+                      );
+                    })}
                   </tr>
                 );
               })}
@@ -363,8 +394,41 @@ export function SiteReadinessDashboard() {
           </table>
         </div>
       </Card>
+
+      {editing && (
+        <EditCellDialog
+          open={!!editing}
+          onOpenChange={(o) => !o && setEditing(null)}
+          itemName={editing.itemName}
+          site={editing.site}
+          value={getCell(editing.itemId, editing.site)}
+          onSave={(v) => setCell(editing.itemId, editing.site, v)}
+        />
+      )}
+      <ManageColumnsDialog
+        open={columnsOpen}
+        onOpenChange={setColumnsOpen}
+        columns={cfg.customColumns}
+        onAdd={addColumn}
+        onRemove={removeColumn}
+      />
     </div>
   );
+}
+
+function EditableCellBadge({ state }: { state: CellState }) {
+  const v = state.status;
+  const base = "inline-flex h-6 min-w-[2rem] items-center justify-center rounded-md px-1.5 text-[10.5px] font-semibold ring-1 transition";
+  if (v === "yes") return <span className={`${base} bg-success/15 text-success ring-success/25`}>YES</span>;
+  if (v === "no") return <span className={`${base} bg-destructive/12 text-destructive ring-destructive/25`}>NO</span>;
+  return <span className={`${base} bg-muted/40 text-muted-foreground ring-border/40`}>—</span>;
+}
+
+function DeadlineChip({ iso }: { iso: string }) {
+  const d = daysUntil(iso);
+  const tone = d < 0 ? "text-destructive" : d < 7 ? "text-warning" : "text-muted-foreground";
+  const label = d < 0 ? `${Math.abs(d)}d late` : d === 0 ? "today" : `${d}d`;
+  return <span className={`font-mono text-[9px] leading-none ${tone}`}>{label}</span>;
 }
 
 function Stat({ label, value, accent }: { label: string; value: string; accent?: "success" }) {
