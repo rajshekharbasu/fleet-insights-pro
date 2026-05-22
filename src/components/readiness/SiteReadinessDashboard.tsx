@@ -2,16 +2,20 @@ import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle, Calendar, CheckCircle2, Clock, Filter, Search, Sparkles, TrendingUp,
-  Building2, Layers, Activity,
+  Building2, Layers, Activity, Settings2, RotateCcw, MessageSquare,
 } from "lucide-react";
 import {
   PieChart, Pie, Cell as RCell, ResponsiveContainer, Tooltip, AreaChart, Area, XAxis, YAxis,
   CartesianGrid, BarChart, Bar, Legend,
 } from "recharts";
 import {
-  READINESS_ITEMS, SITES, type Site, overallReadiness, typeBreakdown, statusBreakdown,
+  READINESS_ITEMS, SITES, type Site, type Cell, overallReadiness, typeBreakdown, statusBreakdown,
   weeklyProgress, upcomingDeadlines, daysUntil, categoryBreakdown,
 } from "@/lib/readiness-data";
+import { useReadinessConfig, type CellState } from "@/lib/readiness-store";
+import { EditCellDialog } from "./EditCellDialog";
+import { ManageColumnsDialog } from "./ManageColumnsDialog";
+import { Button } from "@/components/ui/button";
 
 const CHART_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
 const STATUS_COLORS: Record<string, string> = {
