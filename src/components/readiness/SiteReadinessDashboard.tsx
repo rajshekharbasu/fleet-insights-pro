@@ -9,7 +9,7 @@ import {
   CartesianGrid, BarChart, Bar, Legend,
 } from "recharts";
 import {
-  READINESS_ITEMS, SITES, type Site, type Cell, overallReadiness, typeBreakdown, statusBreakdown,
+  READINESS_ITEMS, SITES, type Site, overallReadiness, typeBreakdown, statusBreakdown,
   weeklyProgress, upcomingDeadlines, daysUntil, categoryBreakdown,
 } from "@/lib/readiness-data";
 import { useReadinessConfig, type CellState } from "@/lib/readiness-store";
