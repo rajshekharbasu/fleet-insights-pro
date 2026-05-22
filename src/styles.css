@@ -582,3 +582,8 @@
     transform: translateX(0);
   }
 }
+
+/* Executive site readiness — CEO global grid */
+.readiness-executive {
+  padding-bottom: 2rem;
+}

@@ -1,12 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageShell } from "@/components/layout/AppNav";
-import { SiteReadinessDashboard } from "@/components/readiness/SiteReadinessDashboard";
+import { CeoReadinessDashboard } from "@/components/readiness/CeoReadinessDashboard";
 
 export const Route = createFileRoute("/readiness")({
   head: () => ({
     meta: [
-      { title: "Site Readiness · Voltline" },
-      { name: "description", content: "Centralised web view of IT/ITMS site readiness across Transvolt Mobility depots — replaces the master Excel sheet." },
+      { title: "Site Readiness · Executive · Voltline" },
+      {
+        name: "description",
+        content:
+          "Executive global view of site readiness — all locations, done vs pending, with deadlines.",
+      },
     ],
   }),
   component: ReadinessPage,
@@ -15,7 +19,7 @@ export const Route = createFileRoute("/readiness")({
 function ReadinessPage() {
   return (
     <PageShell bare>
-      <SiteReadinessDashboard />
+      <CeoReadinessDashboard />
     </PageShell>
   );
 }
