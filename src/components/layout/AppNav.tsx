@@ -12,6 +12,7 @@ const NAV = [
   { to: "/fleet", label: "Fleet Command" },
   { to: "/charging", label: "Charger Command" },
   { to: "/intelligence", label: "Charging Intelligence" },
+  { to: "/readiness", label: "Site Readiness" },
 ] as const;
 
 export function AppNav() {
