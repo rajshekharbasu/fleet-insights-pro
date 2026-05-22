@@ -174,7 +174,8 @@ export function EnergyFlowSection({
   useEffect(() => {
     if (scope === "fleet") return;
     const list = scope === "faulty_bus" ? faultyBuses : faultyChargers;
-    const id = scope === "faulty_bus" ? list[0]?.vehicle_id : list[0]?.charger_id;
+    const first = list[0] as unknown as { vehicle_id?: string; charger_id?: string } | undefined;
+    const id = scope === "faulty_bus" ? first?.vehicle_id : first?.charger_id;
     setSelectedEntityId(id ?? null);
   }, [scope, faultyBuses, faultyChargers]);
 
@@ -223,7 +224,7 @@ export function EnergyFlowSection({
             pattern: activeEntity.dominantLoss === "charger" ? "charger_bottleneck" as const : activeEntity.dominantLoss === "bus" ? "bus_instability" as const : "stable" as const,
             interpretation: activeEntity.lossInsight,
           }
-        : classifyEnergyFlow(trend),
+        : classifyEnergyFlow(trend as Parameters<typeof classifyEnergyFlow>[0]),
     [activeEntity, trend],
   );
 
