@@ -2,10 +2,19 @@
 // Keeps the original sheet as defaults and layers user overrides on top.
 // Swap localStorage with Lovable Cloud later without changing the UI.
 
-import { useCallback, useEffect, useState } from "react";
-import { READINESS_ITEMS, SITES, type Cell, type Site, type ReadinessItem } from "./readiness-data";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { type Cell, type ReadinessItem } from "./readiness-data";
+import {
+  buildEffectiveItems,
+  createCellsForNewSite,
+  ensureConfigDefaults,
+  getEffectiveMasterChecklist,
+  getEffectiveSites,
+  type MasterChecklistEntry,
+  type Site,
+} from "./readiness-config";
 
-const KEY = "voltline.readiness.v1";
+const KEY = "voltline.readiness.v2";
 
 export type CellState = {
   status: Cell;
@@ -33,27 +42,51 @@ export type ConfigShape = {
   itemOverrides: Record<number, ItemOverride>;
   customColumns: CustomColumn[];
   customValues: Record<string, string>; // key = `${itemId}::${colId}`
+  /** Full site list (replaces seed when set). */
+  sites?: Site[];
+  /** Master checklist — applies to all depots. */
+  masterChecklist?: MasterChecklistEntry[];
+  deletedItemIds?: number[];
+  nextItemId?: number;
 };
 
-const EMPTY: ConfigShape = { cells: {}, itemOverrides: {}, customColumns: [], customValues: {} };
+const EMPTY: ConfigShape = {
+  cells: {},
+  itemOverrides: {},
+  customColumns: [],
+  customValues: {},
+};
+
+const LEGACY_KEY = "voltline.readiness.v1";
 
 const cellKey = (itemId: number, site: Site) => `${itemId}::${site}`;
 const valKey = (itemId: number, colId: string) => `${itemId}::${colId}`;
 
 function load(): ConfigShape {
-  if (typeof window === "undefined") return EMPTY;
+  if (typeof window === "undefined") return ensureConfigDefaults(EMPTY);
   try {
-    const raw = window.localStorage.getItem(KEY);
-    if (!raw) return EMPTY;
+    let raw = window.localStorage.getItem(KEY);
+    if (!raw) {
+      const legacy = window.localStorage.getItem(LEGACY_KEY);
+      if (legacy) {
+        raw = legacy;
+        window.localStorage.setItem(KEY, legacy);
+      }
+    }
+    if (!raw) return ensureConfigDefaults(EMPTY);
     const parsed = JSON.parse(raw) as Partial<ConfigShape>;
-    return {
+    return ensureConfigDefaults({
       cells: parsed.cells ?? {},
       itemOverrides: parsed.itemOverrides ?? {},
       customColumns: parsed.customColumns ?? [],
       customValues: parsed.customValues ?? {},
-    };
+      sites: parsed.sites,
+      masterChecklist: parsed.masterChecklist,
+      deletedItemIds: parsed.deletedItemIds,
+      nextItemId: parsed.nextItemId,
+    });
   } catch {
-    return EMPTY;
+    return ensureConfigDefaults(EMPTY);
   }
 }
 
@@ -85,20 +118,23 @@ export function useReadinessConfig() {
     });
   }, []);
 
+  const items = useMemo(() => buildEffectiveItems(cfg), [cfg]);
+  const sites = useMemo(() => getEffectiveSites(cfg), [cfg]);
+
   const getCell = useCallback(
     (itemId: number, site: Site): CellState => {
-      const item = READINESS_ITEMS.find((i) => i.id === itemId);
+      const item = items.find((i) => i.id === itemId);
       const def: CellState = { status: item?.cells[site] ?? "na" };
       return cfg.cells[cellKey(itemId, site)] ?? def;
     },
-    [cfg],
+    [cfg, items],
   );
 
   const setCell = useCallback(
     (itemId: number, site: Site, patch: Partial<CellState>) =>
       update((c) => {
         const k = cellKey(itemId, site);
-        const item = READINESS_ITEMS.find((i) => i.id === itemId);
+        const item = buildEffectiveItems(c).find((i) => i.id === itemId);
         const base: CellState = c.cells[k] ?? { status: item?.cells[site] ?? "na" };
         const merged: CellState = { ...base, ...patch };
         // Clear deadline if status flips to yes
@@ -147,10 +183,104 @@ export function useReadinessConfig() {
     [cfg],
   );
 
-  const reset = useCallback(() => update(() => EMPTY), [update]);
+  const reset = useCallback(() => update(() => ensureConfigDefaults(EMPTY)), [update]);
+
+  const addSite = useCallback(
+    (code: string) => {
+      const trimmed = code.trim();
+      if (!trimmed) return;
+      update((c) => {
+        const normalized = ensureConfigDefaults(c);
+        const list = getEffectiveSites(normalized);
+        if (list.some((s) => s.toLowerCase() === trimmed.toLowerCase())) return normalized;
+        const sites = [...list, trimmed];
+        const cells = createCellsForNewSite({ ...normalized, sites }, trimmed);
+        return { ...normalized, sites, cells };
+      });
+    },
+    [update],
+  );
+
+  const removeSite = useCallback(
+    (site: Site) =>
+      update((c) => {
+        const normalized = ensureConfigDefaults(c);
+        const sites = getEffectiveSites(normalized).filter((s) => s !== site);
+        const cells = { ...normalized.cells };
+        Object.keys(cells).forEach((k) => {
+          if (k.endsWith(`::${site}`)) delete cells[k];
+        });
+        return { ...normalized, sites, cells };
+      }),
+    [update],
+  );
+
+  const updateMasterItem = useCallback(
+    (id: number, patch: Partial<MasterChecklistEntry>) =>
+      update((c) => {
+        const normalized = ensureConfigDefaults(c);
+        const masterChecklist = (normalized.masterChecklist ?? []).map((m) =>
+          m.id === id ? { ...m, ...patch } : m,
+        );
+        return { ...normalized, masterChecklist };
+      }),
+    [update],
+  );
+
+  const addMasterItem = useCallback(
+    (entry: Omit<MasterChecklistEntry, "id">) =>
+      update((c) => {
+        const normalized = ensureConfigDefaults(c);
+        const id = normalized.nextItemId ?? 1000;
+        const masterChecklist = [...(normalized.masterChecklist ?? []), { ...entry, id }];
+        const sites = getEffectiveSites(normalized);
+        const cells = { ...normalized.cells };
+        sites.forEach((site) => {
+          const k = `${id}::${site}`;
+          if (!cells[k]) {
+            const deadline =
+              entry.defaultSlaDays != null && entry.defaultSlaDays >= 0
+                ? (() => {
+                    const d = new Date();
+                    d.setDate(d.getDate() + entry.defaultSlaDays!);
+                    return d.toISOString().slice(0, 10);
+                  })()
+                : undefined;
+            cells[k] = { status: "no", ...(deadline ? { deadline } : {}) };
+          }
+        });
+        return {
+          ...normalized,
+          masterChecklist,
+          nextItemId: id + 1,
+          cells,
+          deletedItemIds: (normalized.deletedItemIds ?? []).filter((x) => x !== id),
+        };
+      }),
+    [update],
+  );
+
+  const removeMasterItem = useCallback(
+    (id: number) =>
+      update((c) => {
+        const normalized = ensureConfigDefaults(c);
+        const deletedItemIds = [...new Set([...(normalized.deletedItemIds ?? []), id])];
+        const cells = { ...normalized.cells };
+        Object.keys(cells).forEach((k) => {
+          if (k.startsWith(`${id}::`)) delete cells[k];
+        });
+        return { ...normalized, deletedItemIds, cells };
+      }),
+    [update],
+  );
+
+  const masterChecklist = useMemo(() => getEffectiveMasterChecklist(cfg), [cfg]);
 
   return {
     cfg,
+    items,
+    sites,
+    masterChecklist,
     getCell,
     setCell,
     addColumn,
@@ -158,15 +288,21 @@ export function useReadinessConfig() {
     setCustomValue,
     getCustomValue,
     reset,
+    addSite,
+    removeSite,
+    updateMasterItem,
+    addMasterItem,
+    removeMasterItem,
   };
 }
 
 /** Helper for aggregations that need the effective sheet (defaults + overrides). */
 export function effectiveCells(cfg: ConfigShape): Record<number, Record<Site, Cell>> {
   const out: Record<number, Record<Site, Cell>> = {};
-  READINESS_ITEMS.forEach((r) => {
+  const sites = getEffectiveSites(cfg);
+  buildEffectiveItems(cfg).forEach((r) => {
     const row = {} as Record<Site, Cell>;
-    SITES.forEach((s) => {
+    sites.forEach((s) => {
       const k = `${r.id}::${s}`;
       row[s] = cfg.cells[k]?.status ?? r.cells[s];
     });
@@ -174,3 +310,5 @@ export function effectiveCells(cfg: ConfigShape): Record<number, Record<Site, Ce
   });
   return out;
 }
+
+export type { Site, MasterChecklistEntry };

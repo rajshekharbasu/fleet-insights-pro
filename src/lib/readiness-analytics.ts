@@ -3,13 +3,8 @@
  * All readiness UI should read from here (not raw READINESS_ITEMS + ad-hoc getCell).
  */
 
-import {
-  READINESS_ITEMS,
-  SITES,
-  daysUntil,
-  type ReadinessItem,
-  type Site,
-} from "@/lib/readiness-data";
+import { daysUntil, type ReadinessItem } from "@/lib/readiness-data";
+import { buildEffectiveItems, getEffectiveSites, type Site } from "@/lib/readiness-config";
 import type { ConfigShape } from "@/lib/readiness-store";
 import { effectiveCells } from "@/lib/readiness-store";
 
@@ -77,13 +72,15 @@ function effectiveOwner(item: ReadinessItem, site: Site, cfg: ConfigShape): stri
 
 export function buildExecutiveModel(cfg: ConfigShape): ExecutiveReadinessModel {
   const cells = effectiveCells(cfg);
+  const items = buildEffectiveItems(cfg);
+  const siteList = getEffectiveSites(cfg);
 
-  const sites: SiteExecutiveView[] = SITES.map((site) => {
+  const sites: SiteExecutiveView[] = siteList.map((site) => {
     const pending: SiteTask[] = [];
     const done: DoneItemRef[] = [];
     let notApplicableCount = 0;
 
-    READINESS_ITEMS.forEach((item) => {
+    items.forEach((item) => {
       const status = cells[item.id][site];
       if (status === "na") {
         notApplicableCount++;
@@ -142,7 +139,7 @@ export function buildExecutiveModel(cfg: ConfigShape): ExecutiveReadinessModel {
     totalDone,
     totalPending,
     totalApplicable,
-    siteCount: SITES.length,
+    siteCount: siteList.length,
     overdueCount: allPending.filter((p) => p.overdue).length,
     dueWithin7Days: allPending.filter((p) => !p.overdue && p.daysUntil <= 7).length,
     worstSite: [...sites].sort((a, b) => a.readinessPct - b.readinessPct)[0] ?? null,

@@ -5,7 +5,8 @@ export const SITES = [
   "MBM", "TUM", "TSCL", "Ultratech", "VECV", "TLPL",
   "MGG", "TI", "Kandla", "Khapri", "Wathoda", "Lakkdganj",
 ] as const;
-export type Site = (typeof SITES)[number];
+/** Site depot code — configurable beyond seed list via readiness-store. */
+export type Site = string;
 
 export type Cell = "yes" | "no" | "na";
 export type ItemType = "Asset Infra" | "Vehicle" | "Software Platform" | "Asset Infra + Software Platform" | "Miscellaneous";
@@ -21,7 +22,7 @@ export interface ReadinessItem {
   priority: "Critical" | "High" | "Medium" | "Low";
   deadline: string; // ISO date
   status: "On Track" | "At Risk" | "Delayed" | "Completed";
-  cells: Record<Site, Cell>;
+  cells: Record<string, Cell>;
 }
 
 // Raw matrix derived from the sheet. Empty entries are coerced to "na".
@@ -98,7 +99,7 @@ function dayOffset(base: Date, d: number): string {
 const TODAY = new Date("2026-05-22");
 
 export const READINESS_ITEMS: ReadinessItem[] = RAW.map(([id, item, category, team, type, cells], idx) => {
-  const cellsObj = {} as Record<Site, Cell>;
+  const cellsObj = {} as Record<string, Cell>;
   SITES.forEach((s, i) => {
     const v = cells[i];
     cellsObj[s] = v === "yes" ? "yes" : v === "no" ? "no" : "na";

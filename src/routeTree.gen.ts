@@ -12,12 +12,15 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SegmentsRouteImport } from './routes/segments'
 import { Route as RoutesRouteImport } from './routes/routes'
 import { Route as ReadinessRouteImport } from './routes/readiness'
+import { Route as MisRouteImport } from './routes/mis'
 import { Route as IntelligenceRouteImport } from './routes/intelligence'
 import { Route as FleetRouteImport } from './routes/fleet'
 import { Route as DriversRouteImport } from './routes/drivers'
 import { Route as ChargingRouteImport } from './routes/charging'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ReadinessIndexRouteImport } from './routes/readiness.index'
 import { Route as ReadinessOpsRouteImport } from './routes/readiness.ops'
+import { Route as ReadinessConfigRouteImport } from './routes/readiness.config'
 
 const SegmentsRoute = SegmentsRouteImport.update({
   id: '/segments',
@@ -32,6 +35,11 @@ const RoutesRoute = RoutesRouteImport.update({
 const ReadinessRoute = ReadinessRouteImport.update({
   id: '/readiness',
   path: '/readiness',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MisRoute = MisRouteImport.update({
+  id: '/mis',
+  path: '/mis',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IntelligenceRoute = IntelligenceRouteImport.update({
@@ -59,9 +67,19 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ReadinessIndexRoute = ReadinessIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ReadinessRoute,
+} as any)
 const ReadinessOpsRoute = ReadinessOpsRouteImport.update({
   id: '/ops',
   path: '/ops',
+  getParentRoute: () => ReadinessRoute,
+} as any)
+const ReadinessConfigRoute = ReadinessConfigRouteImport.update({
+  id: '/config',
+  path: '/config',
   getParentRoute: () => ReadinessRoute,
 } as any)
 
@@ -71,10 +89,13 @@ export interface FileRoutesByFullPath {
   '/drivers': typeof DriversRoute
   '/fleet': typeof FleetRoute
   '/intelligence': typeof IntelligenceRoute
+  '/mis': typeof MisRoute
   '/readiness': typeof ReadinessRouteWithChildren
   '/routes': typeof RoutesRoute
   '/segments': typeof SegmentsRoute
+  '/readiness/config': typeof ReadinessConfigRoute
   '/readiness/ops': typeof ReadinessOpsRoute
+  '/readiness/': typeof ReadinessIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -82,10 +103,12 @@ export interface FileRoutesByTo {
   '/drivers': typeof DriversRoute
   '/fleet': typeof FleetRoute
   '/intelligence': typeof IntelligenceRoute
-  '/readiness': typeof ReadinessRouteWithChildren
+  '/mis': typeof MisRoute
   '/routes': typeof RoutesRoute
   '/segments': typeof SegmentsRoute
+  '/readiness/config': typeof ReadinessConfigRoute
   '/readiness/ops': typeof ReadinessOpsRoute
+  '/readiness': typeof ReadinessIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -94,10 +117,13 @@ export interface FileRoutesById {
   '/drivers': typeof DriversRoute
   '/fleet': typeof FleetRoute
   '/intelligence': typeof IntelligenceRoute
+  '/mis': typeof MisRoute
   '/readiness': typeof ReadinessRouteWithChildren
   '/routes': typeof RoutesRoute
   '/segments': typeof SegmentsRoute
+  '/readiness/config': typeof ReadinessConfigRoute
   '/readiness/ops': typeof ReadinessOpsRoute
+  '/readiness/': typeof ReadinessIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -107,10 +133,13 @@ export interface FileRouteTypes {
     | '/drivers'
     | '/fleet'
     | '/intelligence'
+    | '/mis'
     | '/readiness'
     | '/routes'
     | '/segments'
+    | '/readiness/config'
     | '/readiness/ops'
+    | '/readiness/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -118,10 +147,12 @@ export interface FileRouteTypes {
     | '/drivers'
     | '/fleet'
     | '/intelligence'
-    | '/readiness'
+    | '/mis'
     | '/routes'
     | '/segments'
+    | '/readiness/config'
     | '/readiness/ops'
+    | '/readiness'
   id:
     | '__root__'
     | '/'
@@ -129,10 +160,13 @@ export interface FileRouteTypes {
     | '/drivers'
     | '/fleet'
     | '/intelligence'
+    | '/mis'
     | '/readiness'
     | '/routes'
     | '/segments'
+    | '/readiness/config'
     | '/readiness/ops'
+    | '/readiness/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -141,6 +175,7 @@ export interface RootRouteChildren {
   DriversRoute: typeof DriversRoute
   FleetRoute: typeof FleetRoute
   IntelligenceRoute: typeof IntelligenceRoute
+  MisRoute: typeof MisRoute
   ReadinessRoute: typeof ReadinessRouteWithChildren
   RoutesRoute: typeof RoutesRoute
   SegmentsRoute: typeof SegmentsRoute
@@ -167,6 +202,13 @@ declare module '@tanstack/react-router' {
       path: '/readiness'
       fullPath: '/readiness'
       preLoaderRoute: typeof ReadinessRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mis': {
+      id: '/mis'
+      path: '/mis'
+      fullPath: '/mis'
+      preLoaderRoute: typeof MisRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/intelligence': {
@@ -204,6 +246,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/readiness/': {
+      id: '/readiness/'
+      path: '/'
+      fullPath: '/readiness/'
+      preLoaderRoute: typeof ReadinessIndexRouteImport
+      parentRoute: typeof ReadinessRoute
+    }
     '/readiness/ops': {
       id: '/readiness/ops'
       path: '/ops'
@@ -211,15 +260,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReadinessOpsRouteImport
       parentRoute: typeof ReadinessRoute
     }
+    '/readiness/config': {
+      id: '/readiness/config'
+      path: '/config'
+      fullPath: '/readiness/config'
+      preLoaderRoute: typeof ReadinessConfigRouteImport
+      parentRoute: typeof ReadinessRoute
+    }
   }
 }
 
 interface ReadinessRouteChildren {
+  ReadinessConfigRoute: typeof ReadinessConfigRoute
   ReadinessOpsRoute: typeof ReadinessOpsRoute
+  ReadinessIndexRoute: typeof ReadinessIndexRoute
 }
 
 const ReadinessRouteChildren: ReadinessRouteChildren = {
+  ReadinessConfigRoute: ReadinessConfigRoute,
   ReadinessOpsRoute: ReadinessOpsRoute,
+  ReadinessIndexRoute: ReadinessIndexRoute,
 }
 
 const ReadinessRouteWithChildren = ReadinessRoute._addFileChildren(
@@ -232,6 +292,7 @@ const rootRouteChildren: RootRouteChildren = {
   DriversRoute: DriversRoute,
   FleetRoute: FleetRoute,
   IntelligenceRoute: IntelligenceRoute,
+  MisRoute: MisRoute,
   ReadinessRoute: ReadinessRouteWithChildren,
   RoutesRoute: RoutesRoute,
   SegmentsRoute: SegmentsRoute,

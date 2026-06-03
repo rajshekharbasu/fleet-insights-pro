@@ -8,6 +8,8 @@ import {
   Clock,
   LayoutGrid,
   List,
+  Table2,
+  Settings2,
 } from "lucide-react";
 import {
   buildExecutiveModel,
@@ -17,15 +19,23 @@ import {
   type SiteTask,
 } from "@/lib/readiness-analytics";
 import { useReadinessConfig } from "@/lib/readiness-store";
+import type { Site } from "@/lib/readiness-config";
 import { Button } from "@/components/ui/button";
+import { GlobalReadinessMatrix } from "./GlobalReadinessMatrix";
+import { EditCellDialog } from "./EditCellDialog";
 
-type ViewMode = "sites" | "pending";
+type ViewMode = "sites" | "pending" | "matrix";
+
+type EditingCell = { itemId: number; itemName: string; site: Site };
 
 export function CeoReadinessDashboard() {
-  const { cfg } = useReadinessConfig();
+  const { cfg, getCell, setCell } = useReadinessConfig();
   const model = useMemo(() => buildExecutiveModel(cfg), [cfg]);
   const [view, setView] = useState<ViewMode>("sites");
   const [siteFilter, setSiteFilter] = useState<string>("all");
+  const [editing, setEditing] = useState<EditingCell | null>(null);
+
+  const openEdit = (cell: EditingCell) => setEditing(cell);
 
   const filteredPending = useMemo(() => {
     if (siteFilter === "all") return model.allPending;
@@ -45,8 +55,8 @@ export function CeoReadinessDashboard() {
             Site readiness — all locations
           </h1>
           <p className="mt-2 max-w-2xl text-[13px] text-muted-foreground">
-            Global status across {model.summary.siteCount} sites. Done vs pending with deadlines
-            for every open item.
+            Global status across {model.summary.siteCount} sites. Click any item in site cards to
+            edit status and deadline.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -63,9 +73,21 @@ export function CeoReadinessDashboard() {
               icon={List}
               label="Pending queue"
             />
+            <ViewToggle
+              active={view === "matrix"}
+              onClick={() => setView("matrix")}
+              icon={Table2}
+              label="Global matrix"
+            />
           </div>
           <Button variant="outline" size="sm" asChild>
-            <Link to="/readiness/ops">Operations matrix</Link>
+            <Link to="/readiness/config" preload="intent">
+              <Settings2 className="mr-1.5 h-3.5 w-3.5" />
+              Configuration
+            </Link>
+          </Button>
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/readiness/ops">Operations detail</Link>
           </Button>
         </div>
       </header>
@@ -109,10 +131,12 @@ export function CeoReadinessDashboard() {
         />
       </section>
 
-      {view === "sites" ? (
+      {view === "matrix" ? (
+        <GlobalReadinessMatrix />
+      ) : view === "sites" ? (
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
           {model.sites.map((site) => (
-            <SiteCard key={site.site} site={site} />
+            <SiteCard key={site.site} site={site} onEdit={openEdit} />
           ))}
         </section>
       ) : (
@@ -144,17 +168,40 @@ export function CeoReadinessDashboard() {
               </p>
             ) : (
               filteredPending.map((task) => (
-                <PendingRow key={`${task.site}-${task.itemId}`} task={task} />
+                <PendingRow
+                  key={`${task.site}-${task.itemId}`}
+                  task={task}
+                  onEdit={() =>
+                    openEdit({ itemId: task.itemId, itemName: task.item, site: task.site })
+                  }
+                />
               ))
             )}
           </div>
         </section>
       )}
+
+      {editing && (
+        <EditCellDialog
+          open={!!editing}
+          onOpenChange={(o) => !o && setEditing(null)}
+          itemName={editing.itemName}
+          site={editing.site}
+          value={getCell(editing.itemId, editing.site)}
+          onSave={(v) => setCell(editing.itemId, editing.site, v)}
+        />
+      )}
     </div>
   );
 }
 
-function SiteCard({ site }: { site: SiteExecutiveView }) {
+function SiteCard({
+  site,
+  onEdit,
+}: {
+  site: SiteExecutiveView;
+  onEdit: (cell: EditingCell) => void;
+}) {
   const pct = Math.round(site.readinessPct * 100);
   const barColor =
     pct >= 70 ? "bg-success" : pct >= 45 ? "bg-primary" : pct >= 20 ? "bg-warning" : "bg-destructive";
@@ -203,11 +250,17 @@ function SiteCard({ site }: { site: SiteExecutiveView }) {
             </li>
           ) : (
             site.done.map((d) => (
-              <li
-                key={d.itemId}
-                className="truncate text-[11px] text-muted-foreground before:mr-1.5 before:text-success before:content-['✓']"
-              >
-                {d.item}
+              <li key={d.itemId}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onEdit({ itemId: d.itemId, itemName: d.item, site: site.site })
+                  }
+                  className="w-full truncate rounded px-1 py-0.5 text-left text-[11px] text-muted-foreground transition hover:bg-muted/40 hover:text-foreground before:mr-1.5 before:text-success before:content-['✓']"
+                  title="Click to change status or deadline"
+                >
+                  {d.item}
+                </button>
               </li>
             ))
           )}
@@ -223,7 +276,15 @@ function SiteCard({ site }: { site: SiteExecutiveView }) {
           {site.pending.length === 0 ? (
             <li className="px-1 py-2 text-[11px] text-muted-foreground">All applicable items complete</li>
           ) : (
-            site.pending.map((task) => <SitePendingItem key={task.itemId} task={task} />)
+            site.pending.map((task) => (
+              <SitePendingItem
+                key={task.itemId}
+                task={task}
+                onEdit={() =>
+                  onEdit({ itemId: task.itemId, itemName: task.item, site: task.site })
+                }
+              />
+            ))
           )}
         </ul>
       </div>
@@ -231,7 +292,7 @@ function SiteCard({ site }: { site: SiteExecutiveView }) {
   );
 }
 
-function SitePendingItem({ task }: { task: SiteTask }) {
+function SitePendingItem({ task, onEdit }: { task: SiteTask; onEdit: () => void }) {
   const badge = deadlineBadge(task.daysUntil);
   const toneClass =
     badge.tone === "overdue"
@@ -241,7 +302,13 @@ function SitePendingItem({ task }: { task: SiteTask }) {
         : "bg-muted/50 text-muted-foreground ring-border/40";
 
   return (
-    <li className="rounded-lg border border-border/30 bg-background/40 px-2.5 py-2">
+    <li>
+      <button
+        type="button"
+        onClick={onEdit}
+        className="w-full rounded-lg border border-border/30 bg-background/40 px-2.5 py-2 text-left transition hover:border-primary/40 hover:bg-muted/30"
+        title="Click to edit status and deadline"
+      >
       <div className="text-[12px] font-medium leading-snug">{task.item}</div>
       <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
         <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
@@ -253,11 +320,12 @@ function SitePendingItem({ task }: { task: SiteTask }) {
         </span>
       </div>
       <div className="mt-1 text-[10px] text-muted-foreground">{task.owner}</div>
+      </button>
     </li>
   );
 }
 
-function PendingRow({ task }: { task: SiteTask }) {
+function PendingRow({ task, onEdit }: { task: SiteTask; onEdit: () => void }) {
   const badge = deadlineBadge(task.daysUntil);
   const toneClass =
     badge.tone === "overdue"
@@ -267,7 +335,12 @@ function PendingRow({ task }: { task: SiteTask }) {
         : "bg-muted/50 text-muted-foreground ring-border/40";
 
   return (
-    <div className="flex flex-wrap items-center gap-4 px-5 py-3 hover:bg-muted/20">
+    <button
+      type="button"
+      onClick={onEdit}
+      className="flex w-full flex-wrap items-center gap-4 px-5 py-3 text-left transition hover:bg-muted/20"
+      title="Click to edit"
+    >
       <span className="w-16 shrink-0 text-[12px] font-semibold">{task.site}</span>
       <div className="min-w-0 flex-1">
         <div className="text-[13px] font-medium">{task.item}</div>
@@ -281,7 +354,7 @@ function PendingRow({ task }: { task: SiteTask }) {
           {badge.label}
         </span>
       </div>
-    </div>
+    </button>
   );
 }
 

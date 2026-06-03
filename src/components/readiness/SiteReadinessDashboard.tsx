@@ -9,9 +9,10 @@ import {
   CartesianGrid, BarChart, Bar, Legend,
 } from "recharts";
 import {
-  READINESS_ITEMS, SITES, type Site, overallReadiness, typeBreakdown, statusBreakdown,
+  overallReadiness, typeBreakdown, statusBreakdown,
   weeklyProgress, upcomingDeadlines, daysUntil, categoryBreakdown,
 } from "@/lib/readiness-data";
+import type { Site } from "@/lib/readiness-config";
 import { useReadinessConfig, type CellState } from "@/lib/readiness-store";
 import { EditCellDialog } from "./EditCellDialog";
 import { ManageColumnsDialog } from "./ManageColumnsDialog";
@@ -78,18 +79,20 @@ export function SiteReadinessDashboard() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [siteFilter, setSiteFilter] = useState<Site | "all">("all");
 
-  const { cfg, getCell, setCell, addColumn, removeColumn, getCustomValue, setCustomValue, reset } = useReadinessConfig();
+  const {
+    cfg, items, sites, getCell, setCell, addColumn, removeColumn, getCustomValue, setCustomValue, reset,
+  } = useReadinessConfig();
   const [editing, setEditing] = useState<{ itemId: number; itemName: string; site: Site } | null>(null);
   const [columnsOpen, setColumnsOpen] = useState(false);
 
   const filtered = useMemo(() => {
-    return READINESS_ITEMS.filter((r) => {
+    return items.filter((r) => {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (query && !`${r.item} ${r.team} ${r.owner}`.toLowerCase().includes(query.toLowerCase())) return false;
       if (siteFilter !== "all" && r.cells[siteFilter] === "na") return false;
       return true;
     });
-  }, [query, statusFilter, siteFilter]);
+  }, [query, statusFilter, siteFilter, items]);
 
   const overallPct = Math.round(overall.pct * 100);
 
@@ -113,8 +116,8 @@ export function SiteReadinessDashboard() {
               Transvolt Mobility — Site Readiness
             </h1>
             <p className="mt-2 text-[13px] text-muted-foreground">
-              Centralised, live web view of the IT &amp; ITMS readiness matrix across {SITES.length} sites and{" "}
-              {READINESS_ITEMS.length} workstreams. Replaces the master Excel sheet.
+              Centralised, live web view of the IT &amp; ITMS readiness matrix across {sites.length} sites and{" "}
+              {items.length} workstreams. Replaces the master Excel sheet.
             </p>
           </div>
           {/* Overall progress ring */}
@@ -294,7 +297,7 @@ export function SiteReadinessDashboard() {
             </select>
             <select value={siteFilter} onChange={(e) => setSiteFilter(e.target.value as Site | "all")} className="h-8 rounded-lg border border-border/60 bg-background/60 px-2 text-[12px] outline-none">
               <option value="all">All sites</option>
-              {SITES.map((s) => <option key={s} value={s}>{s}</option>)}
+              {sites.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
             <div className="hidden items-center gap-1.5 rounded-lg bg-muted/40 px-2 py-1 text-[10.5px] text-muted-foreground md:flex">
               <Filter className="h-3 w-3" /> {filtered.length} rows
@@ -323,7 +326,7 @@ export function SiteReadinessDashboard() {
                 {cfg.customColumns.map((c) => (
                   <th key={c.id} className="px-2 py-2.5">{c.label}</th>
                 ))}
-                {SITES.map((s) => (
+                {sites.map((s) => (
                   <th key={s} className="px-1.5 py-2.5 text-center">{s}</th>
                 ))}
               </tr>
@@ -366,7 +369,7 @@ export function SiteReadinessDashboard() {
                         />
                       </td>
                     ))}
-                    {SITES.map((s) => {
+                    {sites.map((s) => {
                       const cell = getCell(r.id, s);
                       return (
                         <td key={s} className="px-1.5 py-2 text-center align-middle">

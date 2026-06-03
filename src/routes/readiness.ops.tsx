@@ -1,5 +1,4 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { PageShell } from "@/components/layout/AppNav";
 import { SiteReadinessDashboard } from "@/components/readiness/SiteReadinessDashboard";
 
 export const Route = createFileRoute("/readiness/ops")({
@@ -17,16 +16,22 @@ export const Route = createFileRoute("/readiness/ops")({
 
 function ReadinessOpsPage() {
   return (
-    <PageShell bare>
-      <div className="mb-4">
+    <>
+      <div className="mb-4 flex flex-wrap gap-4">
         <Link
           to="/readiness"
           className="text-[12px] font-medium text-primary hover:underline"
         >
           ← Back to executive view
         </Link>
+        <Link
+          to="/readiness/config"
+          className="text-[12px] font-medium text-primary hover:underline"
+        >
+          Configuration (depots &amp; master checklist)
+        </Link>
       </div>
       <SiteReadinessDashboard />
-    </PageShell>
+    </>
   );
 }

@@ -587,3 +587,33 @@
 .readiness-executive {
   padding-bottom: 2rem;
 }
+
+/* MIS Report Builder */
+.mis-report-builder {
+  min-width: 1280px;
+}
+
+.mis-table th,
+.mis-table td {
+  white-space: nowrap;
+}
+
+@media print {
+  body.mis-print-kms * {
+    visibility: hidden;
+  }
+  body.mis-print-kms .mis-kms-report,
+  body.mis-print-kms .mis-kms-report * {
+    visibility: visible;
+  }
+  body.mis-print-kms .mis-kms-report {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  @page {
+    size: A3 landscape;
+    margin: 12mm;
+  }
+}
