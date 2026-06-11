@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { ChevronRight, Sparkles } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import type { Trip } from "@/lib/mock-data";
 import {
   buildDailyInsights,
@@ -7,6 +8,7 @@ import {
   type DailyInsight,
   type InsightAudience,
 } from "@/lib/daily-insights";
+import { fetchMartInsightsFact, mapGraphQlInsight } from "@/lib/graphql/insights";
 import { ExportTableButton } from "./ExportTableButton";
 import { InsightDetailDrawer } from "./InsightDetailDrawer";
 
@@ -58,10 +60,27 @@ export function DailyInsightsBrief({
   const [audience, setAudience] = useState<InsightAudience>("operations");
   const [selected, setSelected] = useState<DailyInsight | null>(null);
 
+  const { data: graphQlInsights, isLoading } = useQuery({
+    queryKey: ["mart_insights_fact"],
+    queryFn: () => fetchMartInsightsFact(20),
+  });
+
   const allInsights = useMemo(() => {
+    if (graphQlInsights && graphQlInsights.length > 0) {
+      const mapped = graphQlInsights
+        .map((item, idx) => mapGraphQlInsight(item, idx))
+        .filter((i) => i.title !== "Battery health degraded");
+      if (chargingOnly) {
+        return mapped.filter((i) =>
+          ["charging", "depot", "battery", "thermal"].includes(i.domain.toLowerCase())
+        );
+      }
+      return mapped;
+    }
+
     if (chargingOnly) return buildDailyInsights([], { charging: true });
     return buildDailyInsights(trips ?? [], { charging: true });
-  }, [trips, chargingOnly]);
+  }, [trips, chargingOnly, graphQlInsights]);
 
   const insights = useMemo(
     () => filterInsightsByAudience(allInsights, audience),
@@ -151,37 +170,58 @@ export function DailyInsightsBrief({
               </tr>
             </thead>
             <tbody>
-              {insights.map((ins) => (
-                <tr
-                  key={ins.id}
-                  onClick={() => setSelected(ins)}
-                  className="group cursor-pointer border-b border-border/40 transition-colors last:border-0 hover:bg-primary/5"
-                >
-                  <td className="px-4 py-3">
-                    <span
-                      className={`inline-block h-2.5 w-2.5 rounded-full ${SEV_DOT[ins.severity]}`}
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <div className="font-medium text-foreground group-hover:text-primary">
-                      {ins.title}
-                    </div>
-                    <div className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">
-                      {ins.summary}
-                    </div>
-                  </td>
-                  <td className="px-3 py-3 capitalize text-muted-foreground">{ins.domain}</td>
-                  <td className="px-3 py-3 num font-medium">{ins.metric}</td>
-                  <td className="px-3 py-3 text-muted-foreground">{ins.vsBaseline}</td>
-                  <td className="px-3 py-3">
-                    <InsightSpark values={ins.spark.length ? ins.spark : ins.trend.map((t) => t.value)} />
-                  </td>
-                  <td className="px-3 py-3 text-muted-foreground">
-                    <ChevronRight className="h-4 w-4 opacity-40 group-hover:opacity-100" />
-                  </td>
-                </tr>
-              ))}
-              {insights.length === 0 && (
+              {isLoading ? (
+                Array.from({ length: 4 }).map((_, i) => (
+                  <tr key={`loading-${i}`} className="border-b border-border/40 animate-pulse">
+                    <td className="px-4 py-5 w-8">
+                      <div className="h-2.5 w-2.5 bg-muted rounded-full animate-ping" />
+                    </td>
+                    <td className="px-3 py-5">
+                      <div className="h-4 bg-muted rounded w-48 mb-2" />
+                      <div className="h-3 bg-muted rounded w-72" />
+                    </td>
+                    <td className="px-3 py-5"><div className="h-4 bg-muted rounded w-16" /></td>
+                    <td className="px-3 py-5"><div className="h-4 bg-muted rounded w-16" /></td>
+                    <td className="px-3 py-5"><div className="h-4 bg-muted rounded w-20" /></td>
+                    <td className="px-3 py-5"><div className="h-4 bg-muted rounded w-20" /></td>
+                    <td className="px-3 py-5 w-10" />
+                  </tr>
+                ))
+              ) : (
+                insights.map((ins) => (
+                  <tr
+                    key={ins.id}
+                    onClick={() => setSelected(ins)}
+                    className="group cursor-pointer border-b border-border/40 transition-colors last:border-0 hover:bg-primary/5"
+                  >
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-block h-2.5 w-2.5 rounded-full ${
+                          SEV_DOT[ins.severity as keyof typeof SEV_DOT] || SEV_DOT.info
+                        }`}
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="font-medium text-foreground group-hover:text-primary">
+                        {ins.title}
+                      </div>
+                      <div className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">
+                        {ins.summary}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 capitalize text-muted-foreground">{ins.domain}</td>
+                    <td className="px-3 py-3 num font-medium">{ins.metric}</td>
+                    <td className="px-3 py-3 text-muted-foreground">{ins.vsBaseline}</td>
+                    <td className="px-3 py-3">
+                      <InsightSpark values={ins.spark.length ? ins.spark : ins.trend.map((t) => t.value)} />
+                    </td>
+                    <td className="px-3 py-3 text-muted-foreground">
+                      <ChevronRight className="h-4 w-4 opacity-40 group-hover:opacity-100" />
+                    </td>
+                  </tr>
+                ))
+              )}
+              {!isLoading && insights.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">
                     No insights for this view in the current window.

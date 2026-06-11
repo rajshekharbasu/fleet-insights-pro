@@ -1,5 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { aggregateGraphQlKpis } from "@/lib/graphql-adapter";
+import { GRAPHQL_API_URL } from "@/lib/graphql/config";
+import { fetchDbTrips } from "@/lib/graphql/trips";
 import {
   Activity,
   AlertTriangle,
@@ -60,10 +64,43 @@ function DashboardPage() {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
 
-  const filteredTrips = useMemo(() => applyFilters(ALL_TRIPS, filters), [filters]);
-  const prevTrips = useMemo(() => applyFilters(ALL_TRIPS, previousPeriod(filters)), [filters]);
+  const { data: graphQlData, isLoading, error } = useQuery({
+    queryKey: ["mart_performance_trend"],
+    queryFn: async () => {
+      const res = await fetch(GRAPHQL_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: `query mart_performance_trend {
+                  sqlQuery(sql: "SELECT * FROM mart_performance_trend LIMIT 50")
+                }`
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to fetch GraphQL data");
+      const json = await res.json();
+      return json;
+    }
+  });
 
-  const summary = useMemo(() => summarize(filteredTrips), [filteredTrips]);
+  const { data: dbTrips } = useQuery({
+    queryKey: ["db_trips"],
+    queryFn: () => fetchDbTrips(300),
+  });
+
+  const allTrips = useMemo(() => {
+    return dbTrips && dbTrips.length > 0 ? dbTrips : ALL_TRIPS;
+  }, [dbTrips]);
+
+  const filteredTrips = useMemo(() => applyFilters(allTrips, filters), [allTrips, filters]);
+  const prevTrips = useMemo(() => applyFilters(allTrips, previousPeriod(filters)), [allTrips, filters]);
+
+  const summary = useMemo(() => {
+    if (graphQlData?.data?.sqlQuery) {
+      // In a real app we might want to also filter the GraphQL rows by the date picker range (filters.from/to)
+      return aggregateGraphQlKpis(graphQlData.data.sqlQuery);
+    }
+    return summarize(filteredTrips);
+  }, [graphQlData, filteredTrips]);
   const prevSummary = useMemo(() => summarize(prevTrips), [prevTrips]);
   const trend = useMemo(() => trendByDay(filteredTrips), [filteredTrips]);
   const prevTrend = useMemo(() => trendByDay(prevTrips), [prevTrips]);

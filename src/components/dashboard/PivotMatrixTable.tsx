@@ -1,8 +1,10 @@
 import { ArrowUpDown, Search } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { MedianLegend, PivotMedianFooter, VsMedianCell } from "@/components/dashboard/MedianBaseline";
 import { ExportTableButton } from "@/components/insights/ExportTableButton";
 import { computePivotMedians, type PivotDim, type PivotRow } from "@/lib/analytics";
+import { fetchPivotExploration, mapGraphQlPivotRow } from "@/lib/graphql/pivot";
 
 const DIMS: { key: PivotDim; label: string }[] = [
   { key: "driver_name", label: "Driver" },
@@ -11,6 +13,14 @@ const DIMS: { key: PivotDim; label: string }[] = [
   { key: "company_name", label: "Company" },
   { key: "scheduling_date", label: "Date" },
 ];
+
+const PIVOT_TYPE_MAP: Record<PivotDim, string> = {
+  driver_name: "DRIVER",
+  route_code: "ROUTE",
+  vehiclenumber: "VEHICLE",
+  company_name: "COMPANY",
+  scheduling_date: "DATE",
+};
 
 const COLS: { key: keyof PivotRow; label: string; suffix?: string; align?: "right" | "left" }[] = [
   { key: "label", label: "Entity", align: "left" },
@@ -34,7 +44,19 @@ export function PivotMatrixTable({
   const [asc, setAsc] = useState(false);
   const [q, setQ] = useState("");
 
-  const rows = rowsByDim(dim);
+  const pivotType = PIVOT_TYPE_MAP[dim];
+  const { data: graphQlRows, isLoading, error } = useQuery({
+    queryKey: ["pivotExplorationFact", pivotType],
+    queryFn: () => fetchPivotExploration(pivotType),
+  });
+
+  const rows = useMemo(() => {
+    if (graphQlRows && graphQlRows.length > 0) {
+      return graphQlRows.map(mapGraphQlPivotRow);
+    }
+    // Fallback to client-side local calculation if graphql has no data or is loading/offline
+    return rowsByDim(dim);
+  }, [graphQlRows, dim, rowsByDim]);
 
   const sorted = useMemo(() => {
     const filtered = q ? rows.filter((r) => r.label.toLowerCase().includes(q.toLowerCase())) : rows;
@@ -47,13 +69,51 @@ export function PivotMatrixTable({
   }, [rows, sortKey, asc, q]);
 
   const maxNetKwh = Math.max(1, ...rows.map((r) => r.netKwh));
-  const medians = useMemo(() => computePivotMedians(rows), [rows]);
+  
+  const medians = useMemo(() => {
+    if (!rows.length) {
+      return {
+        kwhPerKm: 0,
+        regenRatio: 0,
+        idleShare: 0,
+        anomalies: 0,
+        netKwh: 0,
+        trips: 0,
+        distance: 0,
+      };
+    }
+    const first = rows[0];
+    if ("fleetKwhPerKmMedian" in first) {
+      return {
+        kwhPerKm: (first as any).fleetKwhPerKmMedian ?? 0,
+        regenRatio: (first as any).fleetRegenPctMedian ?? 0,
+        idleShare: (first as any).fleetIdlePctMedian ?? 0,
+        anomalies: (first as any).fleetAnomaliesMedian ?? 0,
+        netKwh: (first as any).fleetNetKwhMedian ?? 0,
+        trips: (first as any).fleetTripsMedian ?? 0,
+        distance: (first as any).fleetDistanceMedian ?? 0,
+      };
+    }
+    return computePivotMedians(rows);
+  }, [rows]);
 
   return (
     <div className="card-interactive overflow-hidden rounded-2xl border border-border/50 bg-card shadow-elevated">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 p-4">
         <div>
-          <h3 className="text-[15px] font-semibold tracking-tight">Pivot exploration</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-[15px] font-semibold tracking-tight">Pivot exploration</h3>
+            {graphQlRows && graphQlRows.length > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success ring-1 ring-inset ring-success/20">
+                GraphQL
+              </span>
+            )}
+            {error && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive ring-1 ring-inset ring-destructive/20" title={error.message}>
+                Offline Fallback
+              </span>
+            )}
+          </div>
           <p className="mt-0.5 text-[12.5px] text-muted-foreground">
             Aggregate metrics across any dimension. Values are colored vs the pivot median baseline.
           </p>
@@ -119,7 +179,17 @@ export function PivotMatrixTable({
             </tr>
           </thead>
           <tbody>
-            {sorted.map((r) => (
+            {isLoading && (
+              <tr>
+                <td colSpan={COLS.length} className="px-4 py-12 text-center text-muted-foreground">
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                    <span>Querying GraphQL server...</span>
+                  </div>
+                </td>
+              </tr>
+            )}
+            {!isLoading && sorted.map((r) => (
               <tr
                 key={r.key}
                 onClick={() => onRowClick(dim, r)}
@@ -169,8 +239,8 @@ export function PivotMatrixTable({
                 </td>
               </tr>
             ))}
-            {sorted.length > 0 && <PivotMedianFooter medians={medians} />}
-            {sorted.length === 0 && (
+            {!isLoading && sorted.length > 0 && <PivotMedianFooter medians={medians} />}
+            {!isLoading && sorted.length === 0 && (
               <tr>
                 <td colSpan={COLS.length} className="px-4 py-12 text-center text-muted-foreground">
                   No rows match the current filter.

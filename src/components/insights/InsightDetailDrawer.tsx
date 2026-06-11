@@ -1,5 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowUpRight, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import {
   CartesianGrid,
   Line,
@@ -11,6 +13,7 @@ import {
 } from "recharts";
 import { CHART_ENTER } from "@/lib/chart-motion";
 import type { DailyInsight } from "@/lib/daily-insights";
+import { fetchInsightsFact, mapInsightTitleForDetails } from "@/lib/graphql/insights";
 import { ExportTableButton } from "./ExportTableButton";
 
 const SEV_STYLE = {
@@ -26,6 +29,63 @@ export function InsightDetailDrawer({
   insight: DailyInsight | null;
   onClose: () => void;
 }) {
+  const { data: facts, isLoading } = useQuery({
+    queryKey: ["insight_facts", insight?.title],
+    queryFn: () => {
+      if (!insight?.title) return Promise.resolve([]);
+      const queryTitle = mapInsightTitleForDetails(insight.title);
+      return fetchInsightsFact(queryTitle, 100);
+    },
+    enabled: !!insight?.title,
+  });
+
+  const columns = useMemo(() => {
+    if (facts && facts.length > 0) {
+      return [
+        { key: "entity", header: "Entity" },
+        { key: "metric", header: "Metric Value" },
+        { key: "baseline", header: "Baseline" },
+        { key: "description", header: "Description" },
+        { key: "date", header: "Date" },
+      ];
+    }
+    return insight?.evidenceColumns || [];
+  }, [facts, insight?.evidenceColumns]);
+
+  const rows = useMemo(() => {
+    if (facts && facts.length > 0) {
+      return facts.map((item) => {
+        const entity =
+          item.entityName && item.entityName !== item.entityId
+            ? `${item.entityName} (${item.entityId})`
+            : item.entityId;
+        const metric =
+          item.metricValue !== undefined && item.metricValue !== null
+            ? `${item.metricValue}`
+            : "—";
+        const baseline =
+          item.baselineValue !== undefined && item.baselineValue !== null
+            ? `${item.baselineValue}`
+            : "—";
+        const date = item.createdAt
+          ? new Date(item.createdAt).toLocaleDateString(undefined, {
+              month: "2-digit",
+              day: "2-digit",
+            })
+          : "—";
+
+        return {
+          entity,
+          metric,
+          baseline,
+          description: item.insightDescription || "—",
+          date,
+        };
+      });
+    }
+    return insight?.evidence || [];
+  }, [facts, insight?.evidence]);
+
   return (
     <>
       <div
@@ -114,18 +174,18 @@ export function InsightDetailDrawer({
                   <span className="text-[12px] font-semibold">Supporting data</span>
                   <ExportTableButton
                     filename={`voltline-insight-${insight.id}`}
-                    columns={insight.evidenceColumns.map((c) => ({
+                    columns={columns.map((c) => ({
                       key: c.key,
                       header: c.header,
                     }))}
-                    rows={insight.evidence as Record<string, unknown>[]}
+                    rows={rows as Record<string, unknown>[]}
                   />
                 </div>
                 <div className="max-h-52 overflow-auto rounded-xl border border-border/50">
                   <table className="w-full text-[11px]">
                     <thead className="sticky top-0 bg-card">
                       <tr className="border-b border-border/50 text-left text-[10px] uppercase text-muted-foreground">
-                        {insight.evidenceColumns.map((c) => (
+                        {columns.map((c) => (
                           <th key={c.key} className="px-3 py-2 font-medium">
                             {c.header}
                           </th>
@@ -133,15 +193,34 @@ export function InsightDetailDrawer({
                       </tr>
                     </thead>
                     <tbody>
-                      {insight.evidence.map((row, i) => (
-                        <tr key={i} className="border-b border-border/30 last:border-0">
-                          {insight.evidenceColumns.map((c) => (
-                            <td key={c.key} className="px-3 py-2 num">
-                              {row[c.key]}
-                            </td>
-                          ))}
+                      {isLoading ? (
+                        Array.from({ length: 3 }).map((_, i) => (
+                          <tr key={`fact-loading-${i}`} className="border-b border-border/30 animate-pulse">
+                            {columns.map((c) => (
+                              <td key={c.key} className="px-3 py-2">
+                                <div className="h-3.5 bg-muted rounded w-16" />
+                              </td>
+                            ))}
+                          </tr>
+                        ))
+                      ) : (
+                        rows.map((row, i) => (
+                          <tr key={i} className="border-b border-border/30 last:border-0">
+                            {columns.map((c) => (
+                              <td key={c.key} className="px-3 py-2 num">
+                                {row[c.key]}
+                              </td>
+                            ))}
+                          </tr>
+                        ))
+                      )}
+                      {!isLoading && rows.length === 0 && (
+                        <tr>
+                          <td colSpan={columns.length} className="px-3 py-6 text-center text-muted-foreground">
+                            No supporting data available.
+                          </td>
                         </tr>
-                      ))}
+                      )}
                     </tbody>
                   </table>
                 </div>

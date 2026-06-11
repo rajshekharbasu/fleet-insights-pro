@@ -1,7 +1,9 @@
 import { Award, TrendingDown, TrendingUp } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { MedianRangeBar } from "@/components/dashboard/MedianBaseline";
 import { computePivotMedians, type PivotDim, type PivotRow } from "@/lib/analytics";
+import { fetchPivotExploration, mapGraphQlPivotRow } from "@/lib/graphql/pivot";
 
 const DIMS: { key: PivotDim; label: string }[] = [
   { key: "driver_name", label: "Drivers" },
@@ -9,6 +11,14 @@ const DIMS: { key: PivotDim; label: string }[] = [
   { key: "vehiclenumber", label: "Vehicles" },
   { key: "company_name", label: "Companies" },
 ];
+
+const PIVOT_TYPE_MAP: Record<PivotDim, string> = {
+  driver_name: "DRIVER",
+  route_code: "ROUTE",
+  vehiclenumber: "VEHICLE",
+  company_name: "COMPANY",
+  scheduling_date: "DATE",
+};
 
 const METRICS: { key: keyof PivotRow; label: string; lowerIsBetter: boolean; format: (n: number) => string }[] = [
   { key: "kwhPerKm", label: "Efficiency", lowerIsBetter: true, format: (n) => `${n.toFixed(2)} kWh/km` },
@@ -21,8 +31,48 @@ export function RankingList({ rowsByDim }: { rowsByDim: (dim: PivotDim) => Pivot
   const [dim, setDim] = useState<PivotDim>("driver_name");
   const [metricKey, setMetricKey] = useState<typeof METRICS[number]["key"]>("kwhPerKm");
   const metric = METRICS.find((m) => m.key === metricKey)!;
-  const rows = rowsByDim(dim).filter((r) => r.trips >= 3);
-  const medians = useMemo(() => computePivotMedians(rows), [rows]);
+
+  const pivotType = PIVOT_TYPE_MAP[dim];
+  const { data: graphQlRows, isLoading, error } = useQuery({
+    queryKey: ["pivotExplorationFact", "ranking", pivotType],
+    queryFn: () => fetchPivotExploration(pivotType),
+  });
+
+  const rows = useMemo(() => {
+    let rawRows = rowsByDim(dim);
+    if (graphQlRows && graphQlRows.length > 0) {
+      rawRows = graphQlRows.map(mapGraphQlPivotRow);
+    }
+    return rawRows.filter((r) => r.trips >= 3);
+  }, [graphQlRows, dim, rowsByDim]);
+
+  const medians = useMemo(() => {
+    if (!rows.length) {
+      return {
+        kwhPerKm: 0,
+        regenRatio: 0,
+        idleShare: 0,
+        anomalies: 0,
+        netKwh: 0,
+        trips: 0,
+        distance: 0,
+      };
+    }
+    const first = rows[0];
+    if ("fleetKwhPerKmMedian" in first) {
+      return {
+        kwhPerKm: (first as any).fleetKwhPerKmMedian ?? 0,
+        regenRatio: (first as any).fleetRegenPctMedian ?? 0,
+        idleShare: (first as any).fleetIdlePctMedian ?? 0,
+        anomalies: (first as any).fleetAnomaliesMedian ?? 0,
+        netKwh: (first as any).fleetNetKwhMedian ?? 0,
+        trips: (first as any).fleetTripsMedian ?? 0,
+        distance: (first as any).fleetDistanceMedian ?? 0,
+      };
+    }
+    return computePivotMedians(rows);
+  }, [rows]);
+
   const medianVal = medians[metricKey as keyof typeof medians] as number;
 
   const { top, bottom } = useMemo(() => {
@@ -38,7 +88,19 @@ export function RankingList({ rowsByDim }: { rowsByDim: (dim: PivotDim) => Pivot
     <div className="card-interactive rounded-2xl border border-border/50 bg-card p-5 shadow-elevated">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-[15px] font-semibold tracking-tight">Performance rankings</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-[15px] font-semibold tracking-tight">Performance rankings</h3>
+            {graphQlRows && graphQlRows.length > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success ring-1 ring-inset ring-success/20">
+                GraphQL
+              </span>
+            )}
+            {error && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive ring-1 ring-inset ring-destructive/20" title={error.message}>
+                Offline Fallback
+              </span>
+            )}
+          </div>
           <p className="mt-0.5 text-[12.5px] text-muted-foreground">
             Best and worst vs pivot median{" "}
             <span className="num font-medium text-primary">
@@ -78,8 +140,19 @@ export function RankingList({ rowsByDim }: { rowsByDim: (dim: PivotDim) => Pivot
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <RankColumn title="Top performers" tone="success" rows={top} metric={metric} median={medianVal} icon={<TrendingUp className="h-3.5 w-3.5" />} />
-        <RankColumn title="Underperformers" tone="destructive" rows={bottom} metric={metric} median={medianVal} icon={<TrendingDown className="h-3.5 w-3.5" />} />
+        {isLoading ? (
+          <div className="col-span-2 py-12 text-center text-muted-foreground">
+            <div className="flex flex-col items-center justify-center gap-2">
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              <span>Querying GraphQL server...</span>
+            </div>
+          </div>
+        ) : (
+          <>
+            <RankColumn title="Top performers" tone="success" rows={top} metric={metric} median={medianVal} icon={<TrendingUp className="h-3.5 w-3.5" />} />
+            <RankColumn title="Underperformers" tone="destructive" rows={bottom} metric={metric} median={medianVal} icon={<TrendingDown className="h-3.5 w-3.5" />} />
+          </>
+        )}
       </div>
     </div>
   );
