@@ -6,28 +6,34 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import type { CellState } from "@/lib/readiness-store";
-import type { Site, Cell } from "@/lib/readiness-data";
-import { CheckCircle2, XCircle, MinusCircle } from "lucide-react";
+import { CheckCircle2, XCircle, MinusCircle, Loader2 } from "lucide-react";
+
+export interface EditCellValue {
+  status: "yes" | "no" | "na";
+  deadline?: string | null;
+  owner?: string | null;
+  notes?: string | null;
+}
 
 export function EditCellDialog({
-  open, onOpenChange, itemName, site, value, onSave,
+  open, onOpenChange, itemName, site, value, onSave, isSaving
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   itemName: string;
-  site: Site;
-  value: CellState;
-  onSave: (v: CellState) => void;
+  site: string;
+  value: EditCellValue;
+  onSave: (v: EditCellValue) => void;
+  isSaving?: boolean;
 }) {
-  const [draft, setDraft] = useState<CellState>(value);
+  const [draft, setDraft] = useState<EditCellValue>(value);
   useEffect(() => setDraft(value), [value, open]);
 
-  const set = (patch: Partial<CellState>) => setDraft((d) => ({ ...d, ...patch }));
+  const set = (patch: Partial<EditCellValue>) => setDraft((d) => ({ ...d, ...patch }));
   const completed = draft.status === "yes";
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(v) => !isSaving && onOpenChange(v)}>
       <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
           <DialogTitle className="text-[15px]">Configure cell</DialogTitle>
@@ -41,9 +47,9 @@ export function EditCellDialog({
           <div>
             <Label className="text-[11px] uppercase tracking-wider text-muted-foreground">Status</Label>
             <div className="mt-1.5 grid grid-cols-3 gap-2">
-              <StatusBtn icon={CheckCircle2} label="Yes" active={draft.status === "yes"} tone="success" onClick={() => set({ status: "yes" as Cell })} />
-              <StatusBtn icon={XCircle} label="No" active={draft.status === "no"} tone="destructive" onClick={() => set({ status: "no" as Cell })} />
-              <StatusBtn icon={MinusCircle} label="N/A" active={draft.status === "na"} tone="muted" onClick={() => set({ status: "na" as Cell })} />
+              <StatusBtn icon={CheckCircle2} label="Yes" active={draft.status === "yes"} tone="success" onClick={() => set({ status: "yes" })} />
+              <StatusBtn icon={XCircle} label="No" active={draft.status === "no"} tone="destructive" onClick={() => set({ status: "no" })} />
+              <StatusBtn icon={MinusCircle} label="N/A" active={draft.status === "na"} tone="muted" onClick={() => set({ status: "na" })} />
             </div>
           </div>
 
@@ -55,7 +61,7 @@ export function EditCellDialog({
               type="date"
               value={draft.deadline ?? ""}
               disabled={completed}
-              onChange={(e) => set({ deadline: e.target.value || undefined })}
+              onChange={(e) => set({ deadline: e.target.value || null })}
               className="mt-1.5"
             />
           </div>
@@ -65,7 +71,7 @@ export function EditCellDialog({
             <Input
               placeholder="e.g. A. Mehta"
               value={draft.owner ?? ""}
-              onChange={(e) => set({ owner: e.target.value || undefined })}
+              onChange={(e) => set({ owner: e.target.value || null })}
               className="mt-1.5"
             />
           </div>
@@ -75,15 +81,18 @@ export function EditCellDialog({
             <Textarea
               placeholder="Context, blockers, vendor updates…"
               value={draft.notes ?? ""}
-              onChange={(e) => set({ notes: e.target.value || undefined })}
+              onChange={(e) => set({ notes: e.target.value || null })}
               className="mt-1.5 min-h-[80px]"
             />
           </div>
         </div>
 
         <DialogFooter className="gap-2">
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={() => { onSave(draft); onOpenChange(false); }}>Save changes</Button>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isSaving}>Cancel</Button>
+          <Button onClick={() => onSave(draft)} disabled={isSaving}>
+            {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Save changes
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
