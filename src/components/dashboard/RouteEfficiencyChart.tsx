@@ -1,4 +1,6 @@
 import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { fetchRouteEfficiencyRanking } from "@/lib/graphql/routes";
 import {
   Bar,
   BarChart,
@@ -11,11 +13,16 @@ import {
   YAxis,
 } from "recharts";
 import type { Trip } from "@/lib/mock-data";
-import { median } from "@/lib/analytics";
+import { median, type Filters } from "@/lib/analytics";
 import { CHART_ENTER } from "@/lib/chart-motion";
 
-export function RouteEfficiencyChart({ trips }: { trips: Trip[] }) {
-  const rows = useMemo(() => {
+export function RouteEfficiencyChart({ trips, filters }: { trips: Trip[]; filters?: Filters }) {
+  const { data: graphQlRanking, isLoading, error } = useQuery({
+    queryKey: ["route_efficiency_ranking", filters],
+    queryFn: () => fetchRouteEfficiencyRanking(10, filters),
+  });
+
+  const localRows = useMemo(() => {
     const byRoute = new Map<string, { sum: number; n: number }>();
     for (const t of trips) {
       const cur = byRoute.get(t.route_code) ?? { sum: 0, n: 0 };
@@ -26,6 +33,7 @@ export function RouteEfficiencyChart({ trips }: { trips: Trip[] }) {
     return [...byRoute.entries()]
       .map(([code, { sum, n }]) => ({
         route: code,
+        routeName: undefined as string | undefined,
         kwhPerKm: sum / n,
         trips: n,
       }))
@@ -33,12 +41,41 @@ export function RouteEfficiencyChart({ trips }: { trips: Trip[] }) {
       .slice(0, 10);
   }, [trips]);
 
-  const fleetMedian = rows.length ? median(rows.map((r) => r.kwhPerKm)) : 0;
+  const rows = useMemo(() => {
+    if (graphQlRanking && graphQlRanking.length > 0) {
+      return graphQlRanking.map((row) => ({
+        route: row.route_code ? `R-${row.route_code}` : String(row.route_id),
+        routeName: row.route_name,
+        kwhPerKm: row.kwh_per_km,
+        trips: row.trip_count,
+      }));
+    }
+    return localRows;
+  }, [graphQlRanking, localRows]);
+
+  const fleetMedian = useMemo(() => {
+    if (graphQlRanking && graphQlRanking.length > 0) {
+      return graphQlRanking[0].fleet_median || 1.10;
+    }
+    return localRows.length ? median(localRows.map((r) => r.kwhPerKm)) : 0;
+  }, [graphQlRanking, localRows]);
 
   return (
     <div className="card-interactive chart-enter rounded-2xl border border-border/50 bg-card p-5 shadow-elevated">
       <div className="mb-4">
-        <h3 className="text-[15px] font-semibold tracking-tight">Route efficiency ranking</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-[15px] font-semibold tracking-tight">Route efficiency ranking</h3>
+          {graphQlRanking && graphQlRanking.length > 0 && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success ring-1 ring-inset ring-success/20">
+              GraphQL
+            </span>
+          )}
+          {error && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive ring-1 ring-inset ring-destructive/20" title={error instanceof Error ? error.message : String(error)}>
+              Offline Fallback
+            </span>
+          )}
+        </div>
         <p className="mt-0.5 text-[12.5px] text-muted-foreground">
           kWh/km per route vs fleet median{" "}
           <span className="num font-medium text-foreground">
@@ -89,10 +126,13 @@ export function RouteEfficiencyChart({ trips }: { trips: Trip[] }) {
                   if (!active || !payload?.[0]) return null;
                   const d = payload[0].payload as (typeof rows)[number];
                   return (
-                    <div className="rounded-lg border border-border/70 bg-popover/95 px-3 py-2 text-[12px] shadow-elevated backdrop-blur-sm">
+                    <div className="rounded-lg border border-border/70 bg-popover/95 px-3 py-2 text-[12px] shadow-elevated backdrop-blur-sm max-w-[220px]">
                       <div className="num font-semibold">{d.route}</div>
-                      <div className="mt-1 num">{d.kwhPerKm.toFixed(2)} kWh/km</div>
-                      <div className="text-muted-foreground">{d.trips} trips</div>
+                      {d.routeName && (
+                        <div className="text-[11px] text-muted-foreground mb-1 leading-tight">{d.routeName}</div>
+                      )}
+                      <div className="mt-1 num font-medium text-foreground">{d.kwhPerKm.toFixed(2)} kWh/km</div>
+                      <div className="text-muted-foreground">{d.trips.toLocaleString()} trips</div>
                     </div>
                   );
                 }}

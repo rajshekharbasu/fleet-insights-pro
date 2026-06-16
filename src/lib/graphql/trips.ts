@@ -1,11 +1,39 @@
 import { GRAPHQL_API_URL } from "./config";
 import type { Trip } from "../mock-data";
+import type { Filters } from "../analytics";
 
 /**
  * Fetches trip efficiency & telemetry records from the trip_efficiency_fact SQLite table.
  */
-export async function fetchDbTrips(limit = 300): Promise<Trip[]> {
-  const sql = `SELECT * FROM trip_efficiency_fact ORDER BY scheduling_date DESC LIMIT ${limit}`;
+export async function fetchDbTrips(limit = 300, filters?: Filters): Promise<Trip[]> {
+  let whereClauses: string[] = [];
+  if (filters) {
+    if (filters.from) {
+      whereClauses.push(`scheduling_date >= '${filters.from}'`);
+    }
+    if (filters.to) {
+      whereClauses.push(`scheduling_date <= '${filters.to}'`);
+    }
+    if (filters.companies && filters.companies.length > 0) {
+      const list = filters.companies.map(c => `'${c.replace(/'/g, "''")}'`).join(",");
+      whereClauses.push(`companyname IN (${list})`);
+    }
+    if (filters.drivers && filters.drivers.length > 0) {
+      const list = filters.drivers.map(d => `'${d.replace(/'/g, "''")}'`).join(",");
+      whereClauses.push(`driver_name IN (${list})`);
+    }
+    if (filters.routes && filters.routes.length > 0) {
+      const list = filters.routes.map(r => `'${r.replace(/'/g, "''")}'`).join(",");
+      whereClauses.push(`route_code IN (${list})`);
+    }
+    if (filters.vehicles && filters.vehicles.length > 0) {
+      const list = filters.vehicles.map(v => `'${v.replace(/'/g, "''")}'`).join(",");
+      whereClauses.push(`vehiclenumber IN (${list})`);
+    }
+  }
+
+  const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+  const sql = `SELECT * FROM trip_efficiency_fact ${whereStr} ORDER BY scheduling_date DESC LIMIT ${limit}`;
 
   const res = await fetch(GRAPHQL_API_URL, {
     method: "POST",
@@ -45,7 +73,7 @@ export function mapDbRowToTrip(row: any): Trip {
   const eventTs = row.trip_start_time || new Date().toISOString();
 
   return {
-    trip_id: row.schedule_id ? `S-${row.schedule_id}` : (row.trip_id ? `T-${row.trip_id}` : `T-gen-${Math.round(Math.random() * 100000)}`),
+    trip_id: row.trip_id ? `T-${row.trip_id}` : (row.schedule_id ? `S-${row.schedule_id}` : `T-gen-${Math.round(Math.random() * 100000)}`),
     schedule_id: row.schedule_id ? `S-${row.schedule_id}` : "",
     scheduling_date: row.scheduling_date ? row.scheduling_date.slice(0, 10) : "",
     vehiclenumber: row.vehiclenumber || "",
@@ -88,4 +116,65 @@ export function mapDbRowToTrip(row: any): Trip {
     idle_energy_share_pct: net > 0 ? parseFloat(((idle / net) * 100).toFixed(2)) : 0,
     event_ts: eventTs,
   };
+}
+
+export async function fetchDbTripStats(filters: Filters): Promise<{ totalTrips: number; totalDistance: number }> {
+  let whereClauses: string[] = [];
+  if (filters) {
+    if (filters.from) {
+      whereClauses.push(`scheduling_date >= '${filters.from}'`);
+    }
+    if (filters.to) {
+      whereClauses.push(`scheduling_date <= '${filters.to}'`);
+    }
+    if (filters.companies && filters.companies.length > 0) {
+      const list = filters.companies.map(c => `'${c.replace(/'/g, "''")}'`).join(",");
+      whereClauses.push(`companyname IN (${list})`);
+    }
+    if (filters.drivers && filters.drivers.length > 0) {
+      const list = filters.drivers.map(d => `'${d.replace(/'/g, "''")}'`).join(",");
+      whereClauses.push(`driver_name IN (${list})`);
+    }
+    if (filters.routes && filters.routes.length > 0) {
+      const list = filters.routes.map(r => `'${r.replace(/'/g, "''")}'`).join(",");
+      whereClauses.push(`route_code IN (${list})`);
+    }
+    if (filters.vehicles && filters.vehicles.length > 0) {
+      const list = filters.vehicles.map(v => `'${v.replace(/'/g, "''")}'`).join(",");
+      whereClauses.push(`vehiclenumber IN (${list})`);
+    }
+  }
+
+  const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+  const sql = `SELECT COUNT(*) as total_trips, SUM(distance_km_odo_trip) as total_distance FROM trip_efficiency_fact ${whereStr}`;
+
+  const res = await fetch(GRAPHQL_API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query: `query GetStats($sql: String!) {
+        sqlQuery(sql: $sql)
+      }`,
+      variables: { sql },
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch database stats: ${res.statusText}`);
+  }
+
+  const json = await res.json();
+  if (json.errors) {
+    throw new Error(json.errors[0]?.message || "GraphQL query error");
+  }
+
+  const rows = json.data?.sqlQuery || [];
+  if (rows.length > 0) {
+    return {
+      totalTrips: Number(rows[0].total_trips) || 0,
+      totalDistance: Number(rows[0].total_distance) || 0,
+    };
+  }
+
+  return { totalTrips: 0, totalDistance: 0 };
 }

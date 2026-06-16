@@ -54,18 +54,20 @@ export function aggregateGraphQlKpis(records: DailyKpiRecord[]): KpiSummary {
     totalDistance += distance;
 
     // Weighting ratios by distance or trips to get an accurate overall average
-    sumRegenRatioWeighted += (r.regen_ratio / 100) * r.total_kwh; // assuming regen_ratio is e.g., 21.6 for 21.6%
-    sumIdleRatioWeighted += r.idle_ratio * r.total_kwh; // assuming idle_ratio is e.g., 0.4 for 0.4%
+    // r.regen_ratio is a fraction in the DB (e.g. 0.12 for 12%), so we weight it directly
+    sumRegenRatioWeighted += r.regen_ratio * r.total_kwh; 
+    // r.idle_ratio is a fraction in the DB (e.g. 0.41 for 41%), we weight it and scale to percentage for the UI
+    sumIdleRatioWeighted += (r.idle_ratio * 100) * r.total_kwh; 
     sumSocPerKmWeighted += r.soc_per_km * distance;
   }
 
   return {
     netKwh: totalNetKwh,
     kwhPerKm: totalDistance > 0 ? totalNetKwh / totalDistance : 0,
-    // The UI multiplies regenRatio by 100, so we store it as a decimal (e.g. 0.21)
+    // The UI multiplies regenRatio by 100, so we store it as a decimal (e.g. 0.12)
     regenRatio: totalNetKwh > 0 ? sumRegenRatioWeighted / totalNetKwh : 0,
     socDropPerKm: totalDistance > 0 ? sumSocPerKmWeighted / totalDistance : 0,
-    // The UI displays idleSharePct directly (so 0.4 should remain 0.4)
+    // The UI displays idleSharePct directly (so 41.8% should be 41.8)
     idleSharePct: totalNetKwh > 0 ? sumIdleRatioWeighted / totalNetKwh : 0,
     anomalyRatePct: totalTrips > 0 ? (totalAnomalies / totalTrips) * 100 : 0,
     totalTrips,

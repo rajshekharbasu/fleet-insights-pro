@@ -12,9 +12,25 @@ import {
 import { FILTER_OPTIONS } from "@/lib/mock-data";
 import { DEFAULT_FILTERS, type Filters } from "@/lib/analytics";
 
+interface RouteOption {
+  code: string;
+  name: string;
+}
+
+interface VehicleOption {
+  code: string;
+  name: string;
+}
+
 interface Props {
   filters: Filters;
   onChange: (next: Filters) => void;
+  options?: {
+    companies: string[];
+    drivers: string[];
+    routes: RouteOption[];
+    vehicles: VehicleOption[];
+  };
 }
 
 const PRESETS: { label: string; days: number }[] = [
@@ -79,21 +95,53 @@ function MultiSelect<T extends string>({
   );
 }
 
-export function FilterBar({ filters, onChange }: Props) {
+export function FilterBar({ filters, onChange, options }: Props) {
   const activePreset = useMemo(() => {
     const span = daysBetween(filters.from, filters.to);
     return PRESETS.find((p) => Math.abs(span - p.days) <= 1)?.days;
   }, [filters.from, filters.to]);
 
+  const routeMap = useMemo(() => {
+    const map = new Map<string, string>();
+    // 1. Local mock routes mapping
+    FILTER_OPTIONS.routes.forEach((r) => {
+      map.set(r.code, `${r.code} (${r.name})`);
+    });
+    // 2. Dynamic database routes mapping
+    if (options?.routes) {
+      options.routes.forEach((r) => {
+        map.set(r.code, `${r.code} (${r.name})`);
+      });
+    }
+    return map;
+  }, [options?.routes]);
+
+  const vehicleMap = useMemo(() => {
+    const map = new Map<string, string>();
+    // 1. Local mock vehicles mapping
+    FILTER_OPTIONS.vehicles.forEach((v) => {
+      const label = v.name && v.name !== v.code ? `${v.name} (${v.code})` : v.code;
+      map.set(v.code, label);
+    });
+    // 2. Dynamic database vehicles mapping
+    if (options?.vehicles) {
+      options.vehicles.forEach((v) => {
+        const label = v.name && v.name !== v.code ? `${v.name} (${v.code})` : v.code;
+        map.set(v.code, label);
+      });
+    }
+    return map;
+  }, [options?.vehicles]);
+
   const chips = useMemo(() => {
     const items: { label: string; clear: () => void }[] = [];
     filters.companies.forEach((v) => items.push({ label: v, clear: () => toggle("companies", v) }));
     filters.drivers.forEach((v) => items.push({ label: v, clear: () => toggle("drivers", v) }));
-    filters.routes.forEach((v) => items.push({ label: v, clear: () => toggle("routes", v) }));
-    filters.vehicles.forEach((v) => items.push({ label: v, clear: () => toggle("vehicles", v) }));
+    filters.routes.forEach((v) => items.push({ label: routeMap.get(v) || v, clear: () => toggle("routes", v) }));
+    filters.vehicles.forEach((v) => items.push({ label: vehicleMap.get(v) || v, clear: () => toggle("vehicles", v) }));
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters]);
+  }, [filters, routeMap, vehicleMap]);
 
   function toggle<K extends "companies" | "drivers" | "routes" | "vehicles">(key: K, v: string) {
     const cur = filters[key];
@@ -142,25 +190,27 @@ export function FilterBar({ filters, onChange }: Props) {
         <MultiSelect
           label="Company"
           values={filters.companies}
-          options={FILTER_OPTIONS.companies.map((c) => c.name)}
+          options={options?.companies || FILTER_OPTIONS.companies.map((c) => c.name)}
           onToggle={(v) => toggle("companies", v)}
         />
         <MultiSelect
           label="Driver"
           values={filters.drivers}
-          options={FILTER_OPTIONS.drivers}
+          options={options?.drivers || FILTER_OPTIONS.drivers}
           onToggle={(v) => toggle("drivers", v)}
         />
         <MultiSelect
           label="Route"
           values={filters.routes}
-          options={FILTER_OPTIONS.routes.map((r) => r.code)}
+          options={options?.routes.map((r) => r.code) || FILTER_OPTIONS.routes.map((r) => r.code)}
+          getLabel={(code) => routeMap.get(code) || code}
           onToggle={(v) => toggle("routes", v)}
         />
         <MultiSelect
           label="Vehicle"
           values={filters.vehicles}
-          options={FILTER_OPTIONS.vehicles}
+          options={options?.vehicles.map((v) => v.code) || FILTER_OPTIONS.vehicles.map((v) => v.code)}
+          getLabel={(code) => vehicleMap.get(code) || code}
           onToggle={(v) => toggle("vehicles", v)}
         />
 

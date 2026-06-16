@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { aggregateGraphQlKpis } from "@/lib/graphql-adapter";
+import { aggregateGraphQlKpis, type DailyKpiRecord } from "@/lib/graphql-adapter";
 import { GRAPHQL_API_URL } from "@/lib/graphql/config";
-import { fetchDbTrips } from "@/lib/graphql/trips";
+import { fetchDbTrips, fetchDbTripStats } from "@/lib/graphql/trips";
 import {
   Activity,
   AlertTriangle,
@@ -60,9 +60,107 @@ export const Route = createFileRoute("/")({
   component: DashboardPage,
 });
 
+function graphQlTrendByDay(records: DailyKpiRecord[], f: Filters) {
+  const matched = records.filter((r) => {
+    const d = r.scheduling_date.slice(0, 10);
+    if (d < f.from || d > f.to) return false;
+    const companyName = r.company_name || (r as any).companyname;
+    if (f.companies.length && !f.companies.includes(companyName)) return false;
+    return true;
+  });
+
+  const map = new Map<string, DailyKpiRecord[]>();
+  for (const r of matched) {
+    const d = r.scheduling_date.slice(0, 10);
+    const arr = map.get(d) ?? [];
+    arr.push(r);
+    map.set(d, arr);
+  }
+
+  return Array.from(map.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, dayRecords]) => {
+      let totalKwh = 0;
+      let totalTrips = 0;
+      let totalDistance = 0;
+      let sumRegenRatioWeighted = 0;
+      let sumIdleRatioWeighted = 0;
+      let sumSocPerKmWeighted = 0;
+
+      for (const r of dayRecords) {
+        totalKwh += r.total_kwh;
+        totalTrips += r.trip_count;
+        const distance = r.kwh_per_km > 0 ? r.total_kwh / r.kwh_per_km : 0;
+        totalDistance += distance;
+        sumRegenRatioWeighted += r.regen_ratio * r.total_kwh;
+        sumIdleRatioWeighted += (r.idle_ratio * 100) * r.total_kwh;
+        sumSocPerKmWeighted += r.soc_per_km * distance;
+      }
+
+      return {
+        date,
+        kwhPerKm: totalDistance > 0 ? +(totalKwh / totalDistance).toFixed(3) : 0,
+        regenRatio: totalKwh > 0 ? +(sumRegenRatioWeighted / totalKwh * 100).toFixed(2) : 0,
+        netKwh: +totalKwh.toFixed(1),
+        socDropPerKm: totalDistance > 0 ? +(sumSocPerKmWeighted / totalDistance).toFixed(3) : 0,
+        idleShare: totalKwh > 0 ? +(sumIdleRatioWeighted / totalKwh).toFixed(2) : 0,
+        trips: totalTrips,
+      };
+    });
+}
+
 function DashboardPage() {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
+
+  const { data: filterOptions } = useQuery({
+    queryKey: ["filter_options"],
+    queryFn: async () => {
+      const sql = `
+        SELECT 
+          DISTINCT companyname, 
+          driver_name, 
+          route_code, 
+          route_name,
+          vehiclenumber,
+          bus_code
+        FROM trip_efficiency_fact
+      `;
+      const res = await fetch(GRAPHQL_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: `query GetFilterOptions($sql: String!) {
+            sqlQuery(sql: $sql)
+          }`,
+          variables: { sql },
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to fetch filter options");
+      const json = await res.json();
+      const rows = json.data?.sqlQuery || [];
+
+      // Extract unique lists
+      const companies = Array.from(new Set(rows.map((r: any) => r.companyname).filter(Boolean))).sort() as string[];
+      const drivers = Array.from(new Set(rows.map((r: any) => r.driver_name).filter(Boolean))).sort() as string[];
+      const routes = (Array.from(
+        new Map(
+          rows
+            .filter((r: any) => r.route_code)
+            .map((r: any) => [r.route_code, r.route_name || r.route_code])
+        ).entries()
+      ) as [string, string][]).map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code));
+      const vehicles = (Array.from(
+        new Map(
+          rows
+            .filter((r: any) => r.vehiclenumber)
+            .map((r: any) => [r.vehiclenumber, r.bus_code || r.vehiclenumber])
+        ).entries()
+      ) as [string, string][]).map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code));
+
+      return { companies, drivers, routes, vehicles };
+    }
+  });
 
   const { data: graphQlData, isLoading, error } = useQuery({
     queryKey: ["mart_performance_trend"],
@@ -72,7 +170,7 @@ function DashboardPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: `query mart_performance_trend {
-                  sqlQuery(sql: "SELECT * FROM mart_performance_trend LIMIT 50")
+                  sqlQuery(sql: "SELECT * FROM mart_performance_trend")
                 }`
         }),
       });
@@ -83,8 +181,13 @@ function DashboardPage() {
   });
 
   const { data: dbTrips } = useQuery({
-    queryKey: ["db_trips"],
-    queryFn: () => fetchDbTrips(300),
+    queryKey: ["db_trips", filters],
+    queryFn: () => fetchDbTrips(300, filters),
+  });
+
+  const { data: dbStats } = useQuery({
+    queryKey: ["db_trip_stats", filters],
+    queryFn: () => fetchDbTripStats(filters),
   });
 
   const allTrips = useMemo(() => {
@@ -96,14 +199,46 @@ function DashboardPage() {
 
   const summary = useMemo(() => {
     if (graphQlData?.data?.sqlQuery) {
-      // In a real app we might want to also filter the GraphQL rows by the date picker range (filters.from/to)
-      return aggregateGraphQlKpis(graphQlData.data.sqlQuery);
+      const filteredRecords = (graphQlData.data.sqlQuery as DailyKpiRecord[]).filter((r) => {
+        const d = r.scheduling_date.slice(0, 10);
+        if (d < filters.from || d > filters.to) return false;
+        const companyName = r.company_name || (r as any).companyname;
+        if (filters.companies.length && !filters.companies.includes(companyName)) return false;
+        return true;
+      });
+      return aggregateGraphQlKpis(filteredRecords);
     }
     return summarize(filteredTrips);
-  }, [graphQlData, filteredTrips]);
-  const prevSummary = useMemo(() => summarize(prevTrips), [prevTrips]);
-  const trend = useMemo(() => trendByDay(filteredTrips), [filteredTrips]);
-  const prevTrend = useMemo(() => trendByDay(prevTrips), [prevTrips]);
+  }, [graphQlData, filteredTrips, filters]);
+
+  const prevSummary = useMemo(() => {
+    if (graphQlData?.data?.sqlQuery) {
+      const prevFilters = previousPeriod(filters);
+      const filteredRecords = (graphQlData.data.sqlQuery as DailyKpiRecord[]).filter((r) => {
+        const d = r.scheduling_date.slice(0, 10);
+        if (d < prevFilters.from || d > prevFilters.to) return false;
+        const companyName = r.company_name || (r as any).companyname;
+        if (filters.companies.length && !filters.companies.includes(companyName)) return false;
+        return true;
+      });
+      return aggregateGraphQlKpis(filteredRecords);
+    }
+    return summarize(prevTrips);
+  }, [graphQlData, prevTrips, filters]);
+
+  const trend = useMemo(() => {
+    if (graphQlData?.data?.sqlQuery) {
+      return graphQlTrendByDay(graphQlData.data.sqlQuery, filters);
+    }
+    return trendByDay(filteredTrips);
+  }, [graphQlData, filteredTrips, filters]);
+
+  const prevTrend = useMemo(() => {
+    if (graphQlData?.data?.sqlQuery) {
+      return graphQlTrendByDay(graphQlData.data.sqlQuery, previousPeriod(filters));
+    }
+    return trendByDay(prevTrips);
+  }, [graphQlData, prevTrips, filters]);
 
   const rowsByDim = (dim: PivotDim) => pivot(filteredTrips, dim);
   const driverMedians = useMemo(
@@ -151,15 +286,15 @@ function DashboardPage() {
         <div className="accent-bar-top rounded-2xl border border-border/50 bg-card/80 px-5 py-3.5 text-right shadow-elevated backdrop-blur-sm">
           <div className="section-label">Trips in window</div>
           <div className="num mt-1 text-[24px] font-semibold tracking-tight">
-            {summary.totalTrips.toLocaleString()}
+            {(dbStats?.totalTrips ?? summary.totalTrips).toLocaleString()}
           </div>
           <div className="mt-0.5 text-[12px] num text-muted-foreground">
-            {fmt(summary.totalDistance, 0)} km tracked
+            {fmt(dbStats?.totalDistance ?? summary.totalDistance, 0)} km tracked
           </div>
         </div>
       }
     >
-      <FilterBar filters={filters} onChange={setFilters} />
+      <FilterBar filters={filters} onChange={setFilters} options={filterOptions} />
 
       <DailyInsightsBrief trips={filteredTrips} />
 
@@ -258,9 +393,9 @@ function DashboardPage() {
         />
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
           <div className="xl:col-span-2">
-            <MetricTrendChart data={trend} prevData={prevTrend} />
+            <MetricTrendChart data={trend} prevData={prevTrend} isGraphQl={!!graphQlData?.data?.sqlQuery} error={error} />
           </div>
-          <RouteEfficiencyChart trips={filteredTrips} />
+          <RouteEfficiencyChart trips={filteredTrips} filters={filters} />
         </div>
       </section>
 
@@ -271,7 +406,7 @@ function DashboardPage() {
           description="Slice metrics by driver, route, vehicle, company, or date — each pivot shows a fleet median baseline row."
           icon={BarChart3}
         />
-        <PivotMatrixTable rowsByDim={rowsByDim} onRowClick={openTripByEntity} />
+        <PivotMatrixTable rowsByDim={rowsByDim} filters={filters} />
       </section>
 
       <section id="rankings" className="space-y-4">
@@ -281,7 +416,7 @@ function DashboardPage() {
           description="Entities with at least three trips in the selected window."
           icon={Gauge}
         />
-        <RankingList rowsByDim={rowsByDim} />
+        <RankingList rowsByDim={rowsByDim} filters={filters} />
       </section>
 
       <section id="anomalies" className="space-y-4">

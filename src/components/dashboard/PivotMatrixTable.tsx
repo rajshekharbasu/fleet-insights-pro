@@ -3,8 +3,8 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MedianLegend, PivotMedianFooter, VsMedianCell } from "@/components/dashboard/MedianBaseline";
 import { ExportTableButton } from "@/components/insights/ExportTableButton";
-import { computePivotMedians, type PivotDim, type PivotRow } from "@/lib/analytics";
-import { fetchPivotExploration, mapGraphQlPivotRow } from "@/lib/graphql/pivot";
+import { computePivotMedians, type PivotDim, type PivotRow, type Filters, DEFAULT_FILTERS } from "@/lib/analytics";
+import { fetchPivotExploration, mapGraphQlPivotRow, fetchDynamicPivot } from "@/lib/graphql/pivot";
 
 const DIMS: { key: PivotDim; label: string }[] = [
   { key: "driver_name", label: "Driver" },
@@ -34,10 +34,10 @@ const COLS: { key: keyof PivotRow; label: string; suffix?: string; align?: "righ
 ];
 
 export function PivotMatrixTable({
-  rowsByDim, onRowClick,
+  rowsByDim, filters,
 }: {
   rowsByDim: (dim: PivotDim) => PivotRow[];
-  onRowClick: (dim: PivotDim, row: PivotRow) => void;
+  filters?: Filters;
 }) {
   const [dim, setDim] = useState<PivotDim>("driver_name");
   const [sortKey, setSortKey] = useState<keyof PivotRow>("netKwh");
@@ -45,18 +45,19 @@ export function PivotMatrixTable({
   const [q, setQ] = useState("");
 
   const pivotType = PIVOT_TYPE_MAP[dim];
-  const { data: graphQlRows, isLoading, error } = useQuery({
-    queryKey: ["pivotExplorationFact", pivotType],
-    queryFn: () => fetchPivotExploration(pivotType),
+
+  const { data: dbPivotRows, isLoading, error } = useQuery({
+    queryKey: ["dynamic_pivot", dim, filters],
+    queryFn: () => fetchDynamicPivot(dim, filters || DEFAULT_FILTERS),
   });
 
   const rows = useMemo(() => {
-    if (graphQlRows && graphQlRows.length > 0) {
-      return graphQlRows.map(mapGraphQlPivotRow);
+    if (dbPivotRows && dbPivotRows.length > 0) {
+      return dbPivotRows;
     }
-    // Fallback to client-side local calculation if graphql has no data or is loading/offline
+    // Fallback to client-side local calculation if graphql is loading/empty
     return rowsByDim(dim);
-  }, [graphQlRows, dim, rowsByDim]);
+  }, [dbPivotRows, dim, rowsByDim]);
 
   const sorted = useMemo(() => {
     const filtered = q ? rows.filter((r) => r.label.toLowerCase().includes(q.toLowerCase())) : rows;
@@ -103,7 +104,7 @@ export function PivotMatrixTable({
         <div>
           <div className="flex items-center gap-2">
             <h3 className="text-[15px] font-semibold tracking-tight">Pivot exploration</h3>
-            {graphQlRows && graphQlRows.length > 0 && (
+            {dbPivotRows && dbPivotRows.length > 0 && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success ring-1 ring-inset ring-success/20">
                 GraphQL
               </span>
@@ -192,8 +193,7 @@ export function PivotMatrixTable({
             {!isLoading && sorted.map((r) => (
               <tr
                 key={r.key}
-                onClick={() => onRowClick(dim, r)}
-                className="cursor-pointer border-b border-border/40 transition-colors last:border-0 hover:bg-muted/40"
+                className="border-b border-border/40 transition-colors last:border-0 hover:bg-muted/10"
               >
                 <td className="relative px-4 py-2.5">
                   <span

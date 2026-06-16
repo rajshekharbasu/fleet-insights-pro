@@ -188,5 +188,9 @@ export const FILTER_OPTIONS = {
   companies: COMPANIES,
   drivers: Array.from(new Set(TRIPS.map((t) => t.driver_name))).sort(),
   routes: ROUTES,
-  vehicles: Array.from(new Set(TRIPS.map((t) => t.vehiclenumber))).sort(),
+  vehicles: Array.from(
+    new Map(
+      TRIPS.map((t) => [t.vehiclenumber, t.registration_number || t.vehiclenumber])
+    ).entries()
+  ).map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code)),
 };

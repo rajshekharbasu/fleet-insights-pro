@@ -63,9 +63,11 @@ export function InsightDetailDrawer({
           item.metricValue !== undefined && item.metricValue !== null
             ? `${item.metricValue}`
             : "—";
+        const isImbalance = insight?.title.toLowerCase().includes("pack imbalance");
+        const rawBaseline = isImbalance ? 150 : item.baselineValue;
         const baseline =
-          item.baselineValue !== undefined && item.baselineValue !== null
-            ? `${item.baselineValue}`
+          rawBaseline !== undefined && rawBaseline !== null
+            ? `${rawBaseline}`
             : "—";
         const date = item.createdAt
           ? new Date(item.createdAt).toLocaleDateString(undefined, {
@@ -208,7 +210,7 @@ export function InsightDetailDrawer({
                           <tr key={i} className="border-b border-border/30 last:border-0">
                             {columns.map((c) => (
                               <td key={c.key} className="px-3 py-2 num">
-                                {row[c.key]}
+                                {((row as any)[c.key])}
                               </td>
                             ))}
                           </tr>

@@ -1,4 +1,5 @@
-import { AlertTriangle, Flame, ShieldAlert, Waves, Zap } from "lucide-react";
+import { useState, useMemo } from "react";
+import { AlertTriangle, Flame, Search, ShieldAlert, Waves, X, Zap } from "lucide-react";
 import { ExportTableButton } from "@/components/insights/ExportTableButton";
 import type { Trip } from "@/lib/mock-data";
 
@@ -15,16 +16,43 @@ const FLAGS = [
 ] as const;
 
 export function AnomalyTable({ trips, onSelect }: Props) {
-  const flagged = trips.filter(
-    (t) => t.high_temp_flag || t.voltage_instability_flag || t.pack_imbalance_flag || t.efficiency_anomaly_flag,
-  );
+  const [selectedFlag, setSelectedFlag] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
 
-  const counts = FLAGS.map((f) => ({
-    ...f,
-    count: trips.filter((t) => t[f.key]).length,
-  }));
+  const flagged = useMemo(() => {
+    return trips.filter(
+      (t) => t.high_temp_flag || t.voltage_instability_flag || t.pack_imbalance_flag || t.efficiency_anomaly_flag,
+    );
+  }, [trips]);
 
-  const recent = [...flagged].sort((a, b) => b.event_ts.localeCompare(a.event_ts)).slice(0, 12);
+  const filteredFlagged = useMemo(() => {
+    let result = flagged;
+    if (selectedFlag) {
+      result = result.filter((t) => t[selectedFlag as keyof Trip]);
+    }
+    if (searchTerm.trim()) {
+      const term = searchTerm.toLowerCase();
+      result = result.filter(
+        (t) =>
+          t.trip_id.toLowerCase().includes(term) ||
+          t.driver_name.toLowerCase().includes(term) ||
+          t.vehiclenumber.toLowerCase().includes(term) ||
+          (t.route_code && t.route_code.toLowerCase().includes(term)),
+      );
+    }
+    return result;
+  }, [flagged, selectedFlag, searchTerm]);
+
+  const counts = useMemo(() => {
+    return FLAGS.map((f) => ({
+      ...f,
+      count: trips.filter((t) => t[f.key]).length,
+    }));
+  }, [trips]);
+
+  const recent = useMemo(() => {
+    return [...filteredFlagged].sort((a, b) => b.event_ts.localeCompare(a.event_ts)).slice(0, 12);
+  }, [filteredFlagged]);
 
   return (
     <div className="rounded-2xl border border-border/60 bg-card shadow-elevated">
@@ -32,10 +60,33 @@ export function AnomalyTable({ trips, onSelect }: Props) {
         <div>
           <h3 className="text-[15px] font-semibold tracking-tight">Diagnostics & anomalies</h3>
           <p className="mt-0.5 text-[12.5px] text-muted-foreground">
-            {flagged.length} flagged trips out of {trips.length} in the current window.
+            {filteredFlagged.length !== flagged.length ? (
+              <span>Showing {filteredFlagged.length} filtered anomalies (out of {flagged.length})</span>
+            ) : (
+              <span>{flagged.length} flagged trips out of {trips.length} in the current window.</span>
+            )}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <div className="relative mr-2">
+            <input
+              type="text"
+              placeholder="Search driver, vehicle..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="h-9 w-52 rounded-xl border border-border/60 bg-background pl-8 pr-7 text-[12px] placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all"
+            />
+            <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground/60" />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm("")}
+                className="absolute right-2.5 top-2.5 text-muted-foreground/60 hover:text-foreground transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+
           <ExportTableButton
             filename="voltline-anomalies"
             columns={[
@@ -46,17 +97,47 @@ export function AnomalyTable({ trips, onSelect }: Props) {
               { key: "vehiclenumber", header: "Vehicle" },
               { key: "kwh_per_km", header: "kWh/km" },
             ]}
-            rows={flagged as unknown as Record<string, unknown>[]}
+            rows={filteredFlagged as unknown as Record<string, unknown>[]}
           />
+
+          <div className="mx-1 h-5 w-px bg-border/60" />
+
+          <button
+            onClick={() => setSelectedFlag(null)}
+            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11.5px] transition-all ring-1 ${
+              !selectedFlag
+                ? "text-primary bg-primary/10 ring-primary/30 font-semibold"
+                : "text-muted-foreground bg-muted/20 ring-border/50 hover:bg-muted/40"
+            }`}
+          >
+            All
+          </button>
+
           {counts.map((c) => {
             const Icon = c.icon;
-            const tone = c.tone === "destructive" ? "text-destructive bg-destructive/10 ring-destructive/20" : "text-warning bg-warning/10 ring-warning/20";
+            const isActive = selectedFlag === c.key;
+            const isAnyActive = selectedFlag !== null;
+            const tone =
+              c.tone === "destructive"
+                ? "text-destructive bg-destructive/10 ring-destructive/20"
+                : "text-warning bg-warning/10 ring-warning/20";
+
+            const activeClass = isActive
+              ? "ring-2 scale-105 shadow-sm font-semibold opacity-100 animate-pulse-subtle"
+              : isAnyActive
+              ? "opacity-40 hover:opacity-80 scale-95"
+              : "hover:scale-102 hover:shadow-sm opacity-100";
+
             return (
-              <div key={c.key} className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11.5px] ring-1 ${tone}`}>
+              <button
+                key={c.key}
+                onClick={() => setSelectedFlag(isActive ? null : c.key)}
+                className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11.5px] ring-1 transition-all ${tone} ${activeClass}`}
+              >
                 <Icon className="h-3.5 w-3.5" />
                 <span className="font-medium">{c.label}</span>
                 <span className="num font-semibold">{c.count}</span>
-              </div>
+              </button>
             );
           })}
         </div>
@@ -84,11 +165,10 @@ export function AnomalyTable({ trips, onSelect }: Props) {
               return (
                 <tr
                   key={t.trip_id}
-                  onClick={() => onSelect(t)}
-                  className="cursor-pointer border-b border-border/40 last:border-0 transition-colors hover:bg-muted/40"
+                  className="border-b border-border/40 last:border-0 transition-colors hover:bg-muted/10"
                 >
                   <td className="px-4 py-2.5">
-                    <div className="font-medium text-foreground">{t.trip_id}</div>
+                    <div className="font-medium text-foreground">{t.schedule_id || t.trip_id}</div>
                     <div className="text-[11px] text-muted-foreground">{t.scheduling_date}</div>
                   </td>
                   <td className="px-4 py-2.5">

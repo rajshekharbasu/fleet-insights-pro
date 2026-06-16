@@ -2,8 +2,8 @@ import { Award, TrendingDown, TrendingUp } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MedianRangeBar } from "@/components/dashboard/MedianBaseline";
-import { computePivotMedians, type PivotDim, type PivotRow } from "@/lib/analytics";
-import { fetchPivotExploration, mapGraphQlPivotRow } from "@/lib/graphql/pivot";
+import { computePivotMedians, type PivotDim, type PivotRow, type Filters, DEFAULT_FILTERS } from "@/lib/analytics";
+import { fetchPivotExploration, mapGraphQlPivotRow, fetchDynamicPivot } from "@/lib/graphql/pivot";
 
 const DIMS: { key: PivotDim; label: string }[] = [
   { key: "driver_name", label: "Drivers" },
@@ -27,24 +27,25 @@ const METRICS: { key: keyof PivotRow; label: string; lowerIsBetter: boolean; for
   { key: "idleShare", label: "Idle waste", lowerIsBetter: true, format: (n) => `${n.toFixed(1)}%` },
 ];
 
-export function RankingList({ rowsByDim }: { rowsByDim: (dim: PivotDim) => PivotRow[] }) {
+export function RankingList({ rowsByDim, filters }: { rowsByDim: (dim: PivotDim) => PivotRow[]; filters?: Filters }) {
   const [dim, setDim] = useState<PivotDim>("driver_name");
   const [metricKey, setMetricKey] = useState<typeof METRICS[number]["key"]>("kwhPerKm");
   const metric = METRICS.find((m) => m.key === metricKey)!;
 
   const pivotType = PIVOT_TYPE_MAP[dim];
-  const { data: graphQlRows, isLoading, error } = useQuery({
-    queryKey: ["pivotExplorationFact", "ranking", pivotType],
-    queryFn: () => fetchPivotExploration(pivotType),
+
+  const { data: dbPivotRows, isLoading, error } = useQuery({
+    queryKey: ["dynamic_pivot", "ranking", dim, filters],
+    queryFn: () => fetchDynamicPivot(dim, filters || DEFAULT_FILTERS),
   });
 
   const rows = useMemo(() => {
     let rawRows = rowsByDim(dim);
-    if (graphQlRows && graphQlRows.length > 0) {
-      rawRows = graphQlRows.map(mapGraphQlPivotRow);
+    if (dbPivotRows && dbPivotRows.length > 0) {
+      rawRows = dbPivotRows;
     }
     return rawRows.filter((r) => r.trips >= 3);
-  }, [graphQlRows, dim, rowsByDim]);
+  }, [dbPivotRows, dim, rowsByDim]);
 
   const medians = useMemo(() => {
     if (!rows.length) {
@@ -90,7 +91,7 @@ export function RankingList({ rowsByDim }: { rowsByDim: (dim: PivotDim) => Pivot
         <div>
           <div className="flex items-center gap-2">
             <h3 className="text-[15px] font-semibold tracking-tight">Performance rankings</h3>
-            {graphQlRows && graphQlRows.length > 0 && (
+            {dbPivotRows && dbPivotRows.length > 0 && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success ring-1 ring-inset ring-success/20">
                 GraphQL
               </span>

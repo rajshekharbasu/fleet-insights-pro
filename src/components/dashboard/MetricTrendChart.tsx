@@ -45,8 +45,13 @@ function CustomTooltip({ active, payload, label, unit }: any) {
 }
 
 export function MetricTrendChart({
-  data, prevData,
-}: { data: TrendPoint[]; prevData?: TrendPoint[] }) {
+  data, prevData, isGraphQl, error,
+}: { 
+  data: TrendPoint[]; 
+  prevData?: TrendPoint[]; 
+  isGraphQl?: boolean; 
+  error?: any; 
+}) {
   const [metric, setMetric] = useState<MetricKey>("kwhPerKm");
   const [compare, setCompare] = useState(false);
   const m = METRICS.find((x) => x.key === metric)!;
@@ -66,7 +71,19 @@ export function MetricTrendChart({
     <div className="card-interactive chart-enter rounded-2xl border border-border/50 bg-card p-5 shadow-elevated">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-[15px] font-semibold tracking-tight">Performance trend</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-[15px] font-semibold tracking-tight">Performance trend</h3>
+            {isGraphQl && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success ring-1 ring-inset ring-success/20">
+                GraphQL
+              </span>
+            )}
+            {error && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive ring-1 ring-inset ring-destructive/20" title={error instanceof Error ? error.message : String(error)}>
+                Offline Fallback
+              </span>
+            )}
+          </div>
           <p className="mt-0.5 text-[12.5px] text-muted-foreground">
             Daily aggregate · dashed line is period median{" "}
             <span className="num font-medium text-foreground">

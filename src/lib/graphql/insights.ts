@@ -18,29 +18,31 @@ export interface GraphQlInsight {
  * Fetches daily operational & efficiency insights from the GraphQL endpoint.
  */
 export async function fetchMartInsightsFact(limit = 20): Promise<GraphQlInsight[]> {
-  const query = `
-    query GetMartInsightsFact($limit: Int) {
-      martInsightsFact(limit: $limit) {
-        insightDate
-        domain
-        severity
-        insightTitle
-        insightDescription
-        metricValue
-        baselineValue
-        metricUnit
-        trendDirection
-        entityCount
-      }
-    }
+  const sql = `
+    SELECT 
+      snapshot_date as insightDate,
+      domain,
+      severity,
+      insight_title as insightTitle,
+      insight_description as insightDescription,
+      metric_value as metricValue,
+      baseline_value as baselineValue,
+      metric_unit as metricUnit,
+      trend_direction as trendDirection,
+      entity_count as entityCount
+    FROM mart_insights_fact
+    ORDER BY created_at DESC
+    LIMIT ${limit}
   `;
 
   const res = await fetch(GRAPHQL_API_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      query,
-      variables: { limit },
+      query: `query GetMartInsightsFact($sql: String!) {
+        sqlQuery(sql: $sql)
+      }`,
+      variables: { sql },
     }),
   });
 
@@ -53,7 +55,7 @@ export async function fetchMartInsightsFact(limit = 20): Promise<GraphQlInsight[
     throw new Error(json.errors[0]?.message || "GraphQL query error");
   }
 
-  return json.data?.martInsightsFact || [];
+  return json.data?.sqlQuery || [];
 }
 
 /**
@@ -101,8 +103,12 @@ export function mapGraphQlInsight(raw: GraphQlInsight, index: number): DailyInsi
   // Format metric and baseline strings cleanly
   const metricValFmt = typeof raw.metricValue === "number" ? parseFloat(raw.metricValue.toFixed(2)) : raw.metricValue;
   
-  // Override baseline value for thermal domain to 40
-  const overrideBaseline = dom === "thermal" ? 40 : raw.baselineValue;
+  // Override baseline value for thermal domain to 40, and pack imbalance to 150
+  const overrideBaseline = dom === "thermal"
+    ? 40
+    : raw.insightTitle.toLowerCase().includes("pack imbalance")
+      ? 150
+      : raw.baselineValue;
   const baseValFmt = typeof overrideBaseline === "number" ? parseFloat(overrideBaseline.toFixed(2)) : overrideBaseline;
   
   const metric = `${metricValFmt} ${raw.metricUnit}`;
@@ -332,27 +338,29 @@ export async function fetchInsightsFact(
   insightTitle: string,
   limit = 100
 ): Promise<GraphQlInsightFact[]> {
-  const query = `
-    query GetInsightsFact($insightTitle: String!, $limit: Int) {
-      insightsFact(insightTitle: $insightTitle, limit: $limit) {
-        entityId
-        entityName
-        domain
-        severity
-        metricValue
-        baselineValue
-        insightDescription
-        createdAt
-      }
-    }
+  const sql = `
+    SELECT 
+      entity_id as entityId,
+      entity_name as entityName,
+      domain,
+      severity,
+      metric_value as metricValue,
+      baseline_value as baselineValue,
+      insight_description as insightDescription,
+      created_at as createdAt
+    FROM insights_fact
+    WHERE insight_title = '${insightTitle.replace(/'/g, "''")}'
+    LIMIT ${limit}
   `;
 
   const res = await fetch(GRAPHQL_API_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      query,
-      variables: { insightTitle, limit },
+      query: `query GetInsightsFact($sql: String!) {
+        sqlQuery(sql: $sql)
+      }`,
+      variables: { sql },
     }),
   });
 
@@ -365,5 +373,5 @@ export async function fetchInsightsFact(
     throw new Error(json.errors[0]?.message || "GraphQL query error");
   }
 
-  return json.data?.insightsFact || [];
+  return json.data?.sqlQuery || [];
 }
