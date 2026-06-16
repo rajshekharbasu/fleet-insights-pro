@@ -2,21 +2,22 @@ import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle, Calendar, CheckCircle2, Clock, Filter, Search, Sparkles, TrendingUp,
-  Building2, Layers, Activity, Settings2, RotateCcw, MessageSquare,
+  Building2, Layers, Activity, Settings2, RotateCcw, MessageSquare, Loader2
 } from "lucide-react";
 import {
   PieChart, Pie, Cell as RCell, ResponsiveContainer, Tooltip, AreaChart, Area, XAxis, YAxis,
   CartesianGrid, BarChart, Bar, Legend,
 } from "recharts";
-import {
-  overallReadiness, typeBreakdown, statusBreakdown,
-  weeklyProgress, upcomingDeadlines, daysUntil, categoryBreakdown,
-} from "@/lib/readiness-data";
-import type { Site } from "@/lib/readiness-config";
-import { useReadinessConfig, type CellState } from "@/lib/readiness-store";
-import { EditCellDialog } from "./EditCellDialog";
-import { ManageColumnsDialog } from "./ManageColumnsDialog";
+import { EditCellDialog, type EditCellValue } from "./EditCellDialog";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import { 
+  useDashboardStats, 
+  useMatrix, 
+  useSnapshots, 
+  useSites, 
+  useUpdateSiteReadiness 
+} from "@/lib/readiness/queries";
 
 const CHART_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
 const STATUS_COLORS: Record<string, string> = {
@@ -31,6 +32,16 @@ const PRIO_COLORS: Record<string, string> = {
   Medium: "var(--chart-2)",
   Low: "var(--muted-foreground)",
 };
+
+function daysUntil(isoDate: string) {
+  if (!isoDate) return 0;
+  const [y, m, d] = isoDate.split('T')[0].split('-');
+  const date = new Date(Number(y), Number(m) - 1, Number(d));
+  const now = new Date();
+  date.setHours(0,0,0,0);
+  now.setHours(0,0,0,0);
+  return Math.round((date.getTime() - now.getTime()) / 86400000);
+}
 
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
@@ -61,40 +72,122 @@ function CardTitle({ eyebrow, title, icon: Icon, action }: {
   );
 }
 
-function CellBadge({ v }: { v: "yes" | "no" | "na" }) {
-  if (v === "yes") return <span className="inline-flex h-6 min-w-[2rem] items-center justify-center rounded-md bg-success/15 px-1.5 text-[10.5px] font-semibold text-success ring-1 ring-success/25">YES</span>;
-  if (v === "no") return <span className="inline-flex h-6 min-w-[2rem] items-center justify-center rounded-md bg-destructive/12 px-1.5 text-[10.5px] font-semibold text-destructive ring-1 ring-destructive/25">NO</span>;
-  return <span className="inline-flex h-6 min-w-[2rem] items-center justify-center rounded-md bg-muted/40 px-1.5 text-[10.5px] font-medium text-muted-foreground">—</span>;
-}
-
 export function SiteReadinessDashboard() {
-  const overall = useMemo(() => overallReadiness(), []);
-  const byType = useMemo(() => typeBreakdown(), []);
-  const byStatus = useMemo(() => statusBreakdown(), []);
-  const byCategory = useMemo(() => categoryBreakdown(), []);
-  const weekly = useMemo(() => weeklyProgress(12), []);
-  const deadlines = useMemo(() => upcomingDeadlines(8), []);
+  const { data: stats, isLoading: loadingStats } = useDashboardStats();
+  const { data: snapshots } = useSnapshots();
+  const { data: matrixItems, isLoading: loadingMatrix } = useMatrix();
+  const { data: sitesDropdown } = useSites();
+  const { mutate: updateReadiness, isPending: isUpdating } = useUpdateSiteReadiness();
 
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [siteFilter, setSiteFilter] = useState<Site | "all">("all");
+  const [siteFilter, setSiteFilter] = useState<string>("all");
 
-  const {
-    cfg, items, sites, getCell, setCell, addColumn, removeColumn, getCustomValue, setCustomValue, reset,
-  } = useReadinessConfig();
-  const [editing, setEditing] = useState<{ itemId: number; itemName: string; site: Site } | null>(null);
-  const [columnsOpen, setColumnsOpen] = useState(false);
+  const [editing, setEditing] = useState<{ id: string; itemName: string; siteName: string; siteId: string; value: EditCellValue } | null>(null);
+
+  const weekly = useMemo(() => {
+    if (!snapshots || snapshots.length === 0) return [];
+    return [...snapshots]
+      .filter(s => s.site_id === null)
+      .sort((a,b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime())
+      .map(s => ({
+        week: new Date(s.snapshot_date).toLocaleDateString(undefined, { day: "numeric", month: "short" }),
+        overall: +(s.readiness_pct).toFixed(1)
+      }));
+  }, [snapshots]);
+
+  const deadlines = useMemo(() => {
+    if (!matrixItems) return [];
+    return matrixItems
+      .filter(m => m.status !== "YES" && m.status !== "NA" && m.deadline)
+      .sort((a, b) => new Date(a.deadline!).getTime() - new Date(b.deadline!).getTime());
+  }, [matrixItems]);
+
+  const { siteList, tableRows } = useMemo(() => {
+    if (!matrixItems || !sitesDropdown) return { siteList: [], tableRows: [] };
+    
+    const siteNames = sitesDropdown.map(s => s.name);
+    const itemMap = new Map<string, any>();
+    
+    matrixItems.forEach(m => {
+      if (!itemMap.has(m.checklist_item_id)) {
+        itemMap.set(m.checklist_item_id, {
+          id: m.checklist_item_id,
+          item: m.checklist_name,
+          category: m.spend_type,
+          type: m.category,
+          team: m.team,
+          owner: m.owner || "—",
+          priority: m.priority,
+          deadline: m.deadline,
+          status: m.classification, // overall row status
+          cells: {}
+        });
+      }
+      const row = itemMap.get(m.checklist_item_id);
+      row.cells[m.site_name] = {
+        readiness_id: m.readiness_id,
+        site_id: m.site_id,
+        status: m.status === "YES" ? "yes" : (m.status === "NO" ? "no" : "na"),
+        deadline: m.deadline,
+        notes: null
+      };
+    });
+
+    return {
+      siteList: siteNames,
+      tableRows: Array.from(itemMap.values())
+    };
+  }, [matrixItems, sitesDropdown]);
 
   const filtered = useMemo(() => {
-    return items.filter((r) => {
+    return tableRows.filter((r) => {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (query && !`${r.item} ${r.team} ${r.owner}`.toLowerCase().includes(query.toLowerCase())) return false;
-      if (siteFilter !== "all" && r.cells[siteFilter] === "na") return false;
+      if (siteFilter !== "all") {
+        const cell = r.cells[siteFilter];
+        if (!cell || cell.status === "na") return false;
+      }
       return true;
     });
-  }, [query, statusFilter, siteFilter, items]);
+  }, [query, statusFilter, siteFilter, tableRows]);
 
-  const overallPct = Math.round(overall.pct * 100);
+  if (loadingStats || loadingMatrix) {
+    return <div className="flex h-[400px] items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
+  }
+
+  if (!stats) return null;
+
+  const overallPct = Math.round(stats.overall_readiness_pct);
+
+  const handleSaveCell = (val: EditCellValue) => {
+    if (!editing) return;
+    
+    let backendStatus = "NA";
+    if (val.status === "yes") backendStatus = "YES";
+    else if (val.status === "no") backendStatus = "NO";
+
+    updateReadiness(
+      { 
+        id: editing.id, 
+        data: { 
+          status: backendStatus, 
+          deadline: val.deadline,
+          owner: val.owner,
+          notes: val.notes
+        } 
+      },
+      {
+        onSuccess: () => {
+          toast.success("Cell updated successfully");
+          setEditing(null);
+        },
+        onError: (err) => {
+          toast.error(err.message);
+        }
+      }
+    );
+  };
 
   return (
     <div className="space-y-8">
@@ -116,17 +209,16 @@ export function SiteReadinessDashboard() {
               Transvolt Mobility — Site Readiness
             </h1>
             <p className="mt-2 text-[13px] text-muted-foreground">
-              Centralised, live web view of the IT &amp; ITMS readiness matrix across {sites.length} sites and{" "}
-              {items.length} workstreams. Replaces the master Excel sheet.
+              Centralised, live web view of the IT &amp; ITMS readiness matrix across {siteList.length} sites and{" "}
+              {tableRows.length} workstreams.
             </p>
           </div>
-          {/* Overall progress ring */}
           <div className="flex items-center gap-5">
             <ProgressRing pct={overallPct} />
             <div className="space-y-1.5 text-[12px]">
-              <Stat label="Items in scope" value={String(overall.totalItems)} />
-              <Stat label="Applicable cells" value={String(overall.totalApplicable)} />
-              <Stat label="Cells ready" value={String(overall.totalYes)} accent="success" />
+              <Stat label="Items in scope" value={String(stats.items_in_scope)} />
+              <Stat label="Applicable cells" value={String(stats.applicable_cells)} />
+              <Stat label="Cells ready" value={String(stats.cells_ready)} accent="success" />
             </div>
           </div>
         </div>
@@ -134,10 +226,10 @@ export function SiteReadinessDashboard() {
 
       {/* KPI ribbon */}
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiCard icon={CheckCircle2} label="Completed" value={byStatus.find((s) => s.status === "Completed")?.count ?? 0} tone="success" />
-        <KpiCard icon={Activity} label="On Track" value={byStatus.find((s) => s.status === "On Track")?.count ?? 0} tone="primary" />
-        <KpiCard icon={AlertTriangle} label="At Risk" value={byStatus.find((s) => s.status === "At Risk")?.count ?? 0} tone="warning" />
-        <KpiCard icon={Clock} label="Delayed" value={byStatus.find((s) => s.status === "Delayed")?.count ?? 0} tone="destructive" />
+        <KpiCard icon={CheckCircle2} label="Completed" value={stats.workstream_classification.completed} tone="success" />
+        <KpiCard icon={Activity} label="On Track" value={stats.workstream_classification.on_track} tone="primary" />
+        <KpiCard icon={AlertTriangle} label="At Risk" value={stats.workstream_classification.at_risk} tone="warning" />
+        <KpiCard icon={Clock} label="Delayed" value={stats.workstream_classification.delayed} tone="destructive" />
       </section>
 
       {/* Charts row */}
@@ -148,11 +240,11 @@ export function SiteReadinessDashboard() {
             <ResponsiveContainer>
               <PieChart>
                 <Pie
-                  data={byStatus} dataKey="count" nameKey="status"
+                  data={stats.status_mix} dataKey="value" nameKey="name"
                   innerRadius={55} outerRadius={90} paddingAngle={3} stroke="var(--card)"
                 >
-                  {byStatus.map((s) => (
-                    <RCell key={s.status} fill={STATUS_COLORS[s.status]} />
+                  {stats.status_mix.map((s) => (
+                    <RCell key={s.name} fill={STATUS_COLORS[s.name] || "var(--muted)"} />
                   ))}
                 </Pie>
                 <Tooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 12 }} />
@@ -167,12 +259,11 @@ export function SiteReadinessDashboard() {
           <div className="h-[260px] px-2 pb-2 pt-3">
             <ResponsiveContainer>
               <PieChart>
-                <Pie data={byType} dataKey="yes" nameKey="type" innerRadius={55} outerRadius={90} paddingAngle={3} stroke="var(--card)">
-                  {byType.map((_, i) => <RCell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                <Pie data={stats.readiness_by_type} dataKey="value" nameKey="name" innerRadius={55} outerRadius={90} paddingAngle={3} stroke="var(--card)">
+                  {stats.readiness_by_type.map((_, i) => <RCell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
                 </Pie>
                 <Tooltip
                   contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 12 }}
-                  formatter={(v: number, _n, p) => [`${v} ready / ${(p.payload as { total: number }).total} applicable`, p.payload?.type]}
                 />
                 <Legend wrapperStyle={{ fontSize: 10.5 }} />
               </PieChart>
@@ -185,8 +276,8 @@ export function SiteReadinessDashboard() {
           <div className="h-[260px] px-2 pb-2 pt-3">
             <ResponsiveContainer>
               <PieChart>
-                <Pie data={byCategory} dataKey="count" nameKey="category" innerRadius={55} outerRadius={90} paddingAngle={3} stroke="var(--card)">
-                  {byCategory.map((_, i) => <RCell key={i} fill={CHART_COLORS[(i + 2) % CHART_COLORS.length]} />)}
+                <Pie data={stats.spend_mix} dataKey="value" nameKey="name" innerRadius={55} outerRadius={90} paddingAngle={3} stroke="var(--card)">
+                  {stats.spend_mix.map((_, i) => <RCell key={i} fill={CHART_COLORS[(i + 2) % CHART_COLORS.length]} />)}
                 </Pie>
                 <Tooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 12 }} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -199,44 +290,46 @@ export function SiteReadinessDashboard() {
       {/* Weekly trend + Deadlines */}
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.7fr_1fr]">
         <Card>
-          <CardTitle eyebrow="Trend · 12 weeks" title="Week-by-week readiness progress" icon={TrendingUp} />
+          <CardTitle eyebrow="Trend" title="Week-by-week readiness progress" icon={TrendingUp} />
           <div className="h-[300px] px-3 pb-3 pt-4">
-            <ResponsiveContainer>
-              <AreaChart data={weekly} margin={{ top: 8, right: 16, bottom: 0, left: -10 }}>
-                <defs>
-                  <linearGradient id="ovr" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.45} />
-                    <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.4} />
-                <XAxis dataKey="week" tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} unit="%" />
-                <Tooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 12 }} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Area type="monotone" dataKey="overall" name="Overall" stroke="var(--chart-1)" strokeWidth={2.5} fill="url(#ovr)" />
-                <Area type="monotone" dataKey="assetInfra" name="Asset Infra" stroke="var(--chart-2)" strokeWidth={1.6} fill="transparent" />
-                <Area type="monotone" dataKey="vehicle" name="Vehicle" stroke="var(--chart-3)" strokeWidth={1.6} fill="transparent" />
-                <Area type="monotone" dataKey="software" name="Software" stroke="var(--chart-4)" strokeWidth={1.6} fill="transparent" />
-              </AreaChart>
-            </ResponsiveContainer>
+            {weekly.length > 0 ? (
+              <ResponsiveContainer>
+                <AreaChart data={weekly} margin={{ top: 8, right: 16, bottom: 0, left: -10 }}>
+                  <defs>
+                    <linearGradient id="ovr" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.45} />
+                      <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.4} />
+                  <XAxis dataKey="week" tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} unit="%" />
+                  <Tooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 12 }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Area type="monotone" dataKey="overall" name="Overall" stroke="var(--chart-1)" strokeWidth={2.5} fill="url(#ovr)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center text-[12px] text-muted-foreground">No historical snapshot data available yet.</div>
+            )}
           </div>
         </Card>
 
         <Card>
           <CardTitle eyebrow="Calendar" title="Upcoming deadlines" icon={Calendar} />
-          <div className="space-y-2 px-3 pb-4 pt-4">
+          <div className="space-y-2 px-3 pb-4 pt-4 h-[300px] overflow-auto">
+            {deadlines.length === 0 && <div className="text-center text-[12px] text-muted-foreground py-8">No pending deadlines.</div>}
             {deadlines.map((d) => {
-              const days = daysUntil(d.deadline);
+              const days = d.deadline ? daysUntil(d.deadline) : 0;
               const overdue = days < 0;
               return (
-                <div key={d.id} className="flex items-center justify-between gap-3 rounded-xl border border-border/40 bg-background/40 px-3 py-2.5 transition-colors hover:border-primary/30">
+                <div key={d.readiness_id} className="flex items-center justify-between gap-3 rounded-xl border border-border/40 bg-background/40 px-3 py-2.5 transition-colors hover:border-primary/30">
                   <div className="min-w-0">
-                    <div className="truncate text-[12.5px] font-medium">{d.item}</div>
+                    <div className="truncate text-[12.5px] font-medium">{d.checklist_name}</div>
                     <div className="mt-0.5 flex items-center gap-2 text-[10.5px] text-muted-foreground">
-                      <span>{d.owner}</span>
+                      <span>{d.site_name}</span>
                       <span>·</span>
-                      <span>{new Date(d.deadline).toLocaleDateString(undefined, { day: "2-digit", month: "short" })}</span>
+                      <span>{d.deadline ? new Date(d.deadline).toLocaleDateString(undefined, { day: "2-digit", month: "short" }) : "—"}</span>
                     </div>
                   </div>
                   <div className={`shrink-0 rounded-md px-2 py-1 text-[10.5px] font-semibold ring-1 ${overdue
@@ -259,14 +352,14 @@ export function SiteReadinessDashboard() {
         <CardTitle eyebrow="By site" title="Readiness % across sites" icon={Building2} />
         <div className="h-[280px] px-3 pb-3 pt-4">
           <ResponsiveContainer>
-            <BarChart data={overall.sites.map((s) => ({ site: s.site, pct: +(s.pct * 100).toFixed(1), yes: s.yes, no: s.no }))} margin={{ top: 8, right: 16, bottom: 0, left: -10 }}>
+            <BarChart data={stats.readiness_across_sites.map(s => ({ site: s.name, pct: +(s.value).toFixed(1) }))} margin={{ top: 8, right: 16, bottom: 0, left: -10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.4} />
               <XAxis dataKey="site" tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} unit="%" />
               <Tooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 12 }} />
               <Bar dataKey="pct" name="Readiness %" radius={[6, 6, 0, 0]}>
-                {overall.sites.map((s, i) => (
-                  <RCell key={s.site} fill={s.pct >= 0.7 ? "var(--success)" : s.pct >= 0.45 ? "var(--chart-1)" : s.pct >= 0.2 ? "var(--warning)" : "var(--destructive)"} opacity={0.85 - (i % 3) * 0.05} />
+                {stats.readiness_across_sites.map((s, i) => (
+                  <RCell key={s.name} fill={s.value >= 0.7 ? "var(--success)" : s.value >= 0.45 ? "var(--chart-1)" : s.value >= 0.2 ? "var(--warning)" : "var(--destructive)"} opacity={0.85 - (i % 3) * 0.05} />
                 ))}
               </Bar>
             </BarChart>
@@ -295,22 +388,13 @@ export function SiteReadinessDashboard() {
               <option value="all">All status</option>
               <option>On Track</option><option>At Risk</option><option>Delayed</option><option>Completed</option>
             </select>
-            <select value={siteFilter} onChange={(e) => setSiteFilter(e.target.value as Site | "all")} className="h-8 rounded-lg border border-border/60 bg-background/60 px-2 text-[12px] outline-none">
+            <select value={siteFilter} onChange={(e) => setSiteFilter(e.target.value)} className="h-8 rounded-lg border border-border/60 bg-background/60 px-2 text-[12px] outline-none">
               <option value="all">All sites</option>
-              {sites.map((s) => <option key={s} value={s}>{s}</option>)}
+              {siteList.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
             <div className="hidden items-center gap-1.5 rounded-lg bg-muted/40 px-2 py-1 text-[10.5px] text-muted-foreground md:flex">
               <Filter className="h-3 w-3" /> {filtered.length} rows
             </div>
-            <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => setColumnsOpen(true)}>
-              <Settings2 className="h-3.5 w-3.5" /> Manage columns
-            </Button>
-            <Button
-              variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground"
-              onClick={() => { if (confirm("Reset all overrides and custom columns?")) reset(); }}
-            >
-              <RotateCcw className="h-3.5 w-3.5" /> Reset
-            </Button>
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -321,19 +405,14 @@ export function SiteReadinessDashboard() {
                 <th className="px-2 py-2.5">Team</th>
                 <th className="px-2 py-2.5">Owner</th>
                 <th className="px-2 py-2.5">Priority</th>
-                <th className="px-2 py-2.5">Deadline</th>
                 <th className="px-2 py-2.5">Status</th>
-                {cfg.customColumns.map((c) => (
-                  <th key={c.id} className="px-2 py-2.5">{c.label}</th>
-                ))}
-                {sites.map((s) => (
+                {siteList.map((s) => (
                   <th key={s} className="px-1.5 py-2.5 text-center">{s}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.map((r) => {
-                const d = daysUntil(r.deadline);
                 return (
                   <tr key={r.id} className="border-b border-border/30 transition-colors hover:bg-muted/20">
                     <td className="sticky left-0 z-10 bg-card/80 px-4 py-2 backdrop-blur-sm">
@@ -343,39 +422,24 @@ export function SiteReadinessDashboard() {
                     <td className="px-2 py-2 text-muted-foreground">{r.team}</td>
                     <td className="px-2 py-2">{r.owner}</td>
                     <td className="px-2 py-2">
-                      <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[10.5px] font-semibold ring-1" style={{ color: PRIO_COLORS[r.priority], borderColor: "transparent", background: `color-mix(in oklab, ${PRIO_COLORS[r.priority]} 12%, transparent)` }}>
+                      <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[10.5px] font-semibold ring-1" style={{ color: PRIO_COLORS[r.priority] || "var(--muted)", borderColor: "transparent", background: `color-mix(in oklab, ${PRIO_COLORS[r.priority] || "var(--muted)"} 12%, transparent)` }}>
                         {r.priority}
                       </span>
                     </td>
-                    <td className="px-2 py-2 text-muted-foreground">
-                      {new Date(r.deadline).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "2-digit" })}
-                      <div className={`text-[10px] ${d < 0 ? "text-destructive" : d < 7 ? "text-warning" : "text-muted-foreground/70"}`}>
-                        {d < 0 ? `${Math.abs(d)}d overdue` : d === 0 ? "today" : `in ${d}d`}
-                      </div>
-                    </td>
                     <td className="px-2 py-2">
-                      <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[10.5px] font-semibold ring-1" style={{ color: STATUS_COLORS[r.status], background: `color-mix(in oklab, ${STATUS_COLORS[r.status]} 14%, transparent)`, borderColor: "transparent" }}>
-                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: STATUS_COLORS[r.status] }} />
+                      <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[10.5px] font-semibold ring-1" style={{ color: STATUS_COLORS[r.status] || "var(--muted)", background: `color-mix(in oklab, ${STATUS_COLORS[r.status] || "var(--muted)"} 14%, transparent)`, borderColor: "transparent" }}>
+                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: STATUS_COLORS[r.status] || "var(--muted)" }} />
                         {r.status}
                       </span>
                     </td>
-                    {cfg.customColumns.map((c) => (
-                      <td key={c.id} className="px-2 py-2">
-                        <input
-                          type={c.type === "date" ? "date" : c.type === "number" ? "number" : "text"}
-                          value={getCustomValue(r.id, c.id)}
-                          onChange={(e) => setCustomValue(r.id, c.id, e.target.value)}
-                          className="h-7 w-full min-w-[110px] rounded-md border border-border/40 bg-background/40 px-2 text-[11.5px] outline-none focus:border-primary/40"
-                        />
-                      </td>
-                    ))}
-                    {sites.map((s) => {
-                      const cell = getCell(r.id, s);
+                    {siteList.map((s) => {
+                      const cell = r.cells[s];
+                      if (!cell) return <td key={s} className="px-1.5 py-2 text-center align-middle" />;
                       return (
                         <td key={s} className="px-1.5 py-2 text-center align-middle">
                           <button
                             type="button"
-                            onClick={() => setEditing({ itemId: r.id, itemName: r.item, site: s })}
+                            onClick={() => setEditing({ id: cell.readiness_id, itemName: r.item, siteName: s, siteId: cell.site_id, value: cell })}
                             className="group/cell inline-flex flex-col items-center gap-1 rounded-md p-0.5 transition hover:bg-muted/40"
                             title="Click to configure"
                           >
@@ -403,28 +467,22 @@ export function SiteReadinessDashboard() {
           open={!!editing}
           onOpenChange={(o) => !o && setEditing(null)}
           itemName={editing.itemName}
-          site={editing.site}
-          value={getCell(editing.itemId, editing.site)}
-          onSave={(v) => setCell(editing.itemId, editing.site, v)}
+          site={editing.siteName}
+          value={editing.value}
+          onSave={handleSaveCell}
+          isSaving={isUpdating}
         />
       )}
-      <ManageColumnsDialog
-        open={columnsOpen}
-        onOpenChange={setColumnsOpen}
-        columns={cfg.customColumns}
-        onAdd={addColumn}
-        onRemove={removeColumn}
-      />
     </div>
   );
 }
 
-function EditableCellBadge({ state }: { state: CellState }) {
+function EditableCellBadge({ state }: { state: any }) {
   const v = state.status;
   const base = "inline-flex h-6 min-w-[2rem] items-center justify-center rounded-md px-1.5 text-[10.5px] font-semibold ring-1 transition";
   if (v === "yes") return <span className={`${base} bg-success/15 text-success ring-success/25`}>YES</span>;
   if (v === "no") return <span className={`${base} bg-destructive/12 text-destructive ring-destructive/25`}>NO</span>;
-  return <span className={`${base} bg-muted/40 text-muted-foreground ring-border/40`}>—</span>;
+  return <span className={`${base} bg-muted/40 text-muted-foreground ring-border/40`}>N/A</span>;
 }
 
 function DeadlineChip({ iso }: { iso: string }) {

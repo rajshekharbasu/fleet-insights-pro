@@ -1,28 +1,43 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Building2, ClipboardList, Plus, Trash2 } from "lucide-react";
-import { useReadinessConfig } from "@/lib/readiness-store";
-import type { MasterChecklistEntry } from "@/lib/readiness-config";
-import type { Cost } from "@/lib/readiness-data";
+import { Building2, ClipboardList, Plus, Trash2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { toast } from "sonner";
+import { 
+  useSites, 
+  useChecklistItems, 
+  useCreateChecklistItem, 
+  useUpdateChecklistItem, 
+  useDeleteChecklistItem 
+} from "@/lib/readiness/queries";
 
-const CATEGORIES: Cost[] = ["CAPEX", "OPEX", "CAPEX + OPEX", "SOFTWARE", "APP"];
-const PRIORITIES: MasterChecklistEntry["priority"][] = ["Critical", "High", "Medium", "Low"];
+const CATEGORIES = ["CAPEX", "OPEX", "CAPEX + OPEX", "SOFTWARE", "APP"];
+const PRIORITIES = ["Critical", "High", "Medium", "Low"];
 
 export function ReadinessConfigPanel() {
-  const {
-    sites,
-    masterChecklist,
-    addSite,
-    removeSite,
-    updateMasterItem,
-    addMasterItem,
-    removeMasterItem,
-  } = useReadinessConfig();
+  const { data: sitesData, isLoading: loadingSites } = useSites();
+  const { data: checklistData, isLoading: loadingChecklist } = useChecklistItems();
+  
+  const [siteFilter, setSiteFilter] = useState<"all" | "active" | "inactive">("all");
+  const [sitesSearch, setSitesSearch] = useState("");
+  const [checklistSearch, setChecklistSearch] = useState("");
 
-  const [newSite, setNewSite] = useState("");
+  const sites = sitesData || [];
+  const masterChecklist = checklistData?.items || [];
+
+  const filteredSites = sites.filter((site) => {
+    if (siteFilter === "active" && !site.is_active) return false;
+    if (siteFilter === "inactive" && site.is_active) return false;
+    if (sitesSearch && !`${site.name} ${site.code} ${site.site_type} ${site.location}`.toLowerCase().includes(sitesSearch.toLowerCase())) return false;
+    return true;
+  });
+
+  const filteredChecklist = masterChecklist.filter((item) => {
+    if (checklistSearch && !`${item.name} ${item.team} ${item.default_owner} ${item.category}`.toLowerCase().includes(checklistSearch.toLowerCase())) return false;
+    return true;
+  });
 
   return (
     <div className="mx-auto max-w-[1200px] space-y-6">
@@ -33,12 +48,12 @@ export function ReadinessConfigPanel() {
           </p>
           <h1 className="mt-1 text-[26px] font-semibold tracking-tight">Site readiness setup</h1>
           <p className="mt-2 max-w-xl text-[13px] text-muted-foreground">
-            Add depots and maintain the master checklist. Default SLA (days) applies when you add a
-            new site — each open item gets a deadline automatically.
+            View active sites and maintain the master checklist. Default SLA (days) applies when you onboard a
+            new site via the Master module — each open item gets a deadline automatically.
           </p>
         </div>
         <Button variant="outline" asChild>
-          <Link to="/readiness/">← Back to overview</Link>
+          <Link to="/readiness">← Back to overview</Link>
         </Button>
       </header>
 
@@ -46,7 +61,7 @@ export function ReadinessConfigPanel() {
         <TabsList className="h-10">
           <TabsTrigger value="sites" className="gap-2 text-[13px]">
             <Building2 className="h-4 w-4" />
-            Depots ({sites.length})
+            Sites ({sites.length})
           </TabsTrigger>
           <TabsTrigger value="checklist" className="gap-2 text-[13px]">
             <ClipboardList className="h-4 w-4" />
@@ -55,35 +70,29 @@ export function ReadinessConfigPanel() {
         </TabsList>
 
         <TabsContent value="sites" className="mt-4 space-y-4">
-          <div className="rounded-xl border border-border/50 bg-card/50 p-4">
-            <h2 className="text-[14px] font-semibold">Add a depot</h2>
-            <p className="mt-1 text-[12px] text-muted-foreground">
-              New depots get every checklist row with status &quot;No&quot; and deadlines from each
-              item&apos;s default SLA.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
+          <div className="flex items-center justify-between rounded-xl border border-border/50 bg-card/50 p-4">
+            <div>
+              <h2 className="text-[14px] font-semibold">Tracked Sites</h2>
+              <p className="mt-1 text-[12px] text-muted-foreground">
+                Sites are managed in the Onboarding module. The list below shows all sites currently tracked.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
               <Input
-                placeholder="Depot code e.g. Nagpur"
-                value={newSite}
-                onChange={(e) => setNewSite(e.target.value)}
-                className="h-10 max-w-xs text-[14px]"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    addSite(newSite);
-                    setNewSite("");
-                  }
-                }}
+                placeholder="Search sites..."
+                value={sitesSearch}
+                onChange={(e) => setSitesSearch(e.target.value)}
+                className="h-8 w-64 bg-background text-[12px]"
               />
-              <Button
-                className="h-10 gap-1.5"
-                onClick={() => {
-                  addSite(newSite);
-                  setNewSite("");
-                }}
+              <select
+                value={siteFilter}
+                onChange={(e) => setSiteFilter(e.target.value as any)}
+                className="h-8 rounded-md border border-border/60 bg-background px-2 text-[12px] text-foreground"
               >
-                <Plus className="h-4 w-4" />
-                Add depot
-              </Button>
+                <option value="all">All Sites</option>
+                <option value="active">Active Only</option>
+                <option value="inactive">Inactive Only</option>
+              </select>
             </div>
           </div>
 
@@ -91,37 +100,63 @@ export function ReadinessConfigPanel() {
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="border-b border-border/40 bg-muted/30 text-left text-[11px] uppercase text-muted-foreground">
-                  <th className="px-4 py-2.5">Depot</th>
-                  <th className="px-4 py-2.5 w-24" />
+                  <th className="px-4 py-2.5">Site Name</th>
+                  <th className="px-4 py-2.5">Site Code</th>
+                  <th className="px-4 py-2.5">Site Type</th>
+                  <th className="px-4 py-2.5">Location</th>
+                  <th className="px-4 py-2.5">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {sites.map((site) => (
-                  <tr key={site} className="border-b border-border/25">
-                    <td className="px-4 py-3 font-medium">{site}</td>
-                    <td className="px-4 py-3 text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => {
-                          if (confirm(`Remove depot "${site}" and all its cell data?`)) {
-                            removeSite(site);
-                          }
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                {loadingSites ? (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                      <Loader2 className="mx-auto h-5 w-5 animate-spin opacity-50" />
                     </td>
                   </tr>
-                ))}
+                ) : filteredSites.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                      No sites match the current filter.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredSites.map((site) => (
+                    <tr key={site.id} className="border-b border-border/25">
+                      <td className="px-4 py-3 font-medium">{site.name}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{site.code}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{site.site_type || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{site.location || "—"}</td>
+                      <td className="px-4 py-3">
+                        {site.is_active ? (
+                          <span className="inline-flex items-center rounded-md bg-success/15 px-2 py-0.5 text-[10px] font-medium text-success ring-1 ring-inset ring-success/20">
+                            Active
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center rounded-md bg-destructive/15 px-2 py-0.5 text-[10px] font-medium text-destructive ring-1 ring-inset ring-destructive/20">
+                            Inactive
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
         </TabsContent>
 
         <TabsContent value="checklist" className="mt-4 space-y-4">
-          <ChecklistAddForm onAdd={addMasterItem} />
+          <div className="flex items-center justify-between">
+            <h2 className="text-[14px] font-semibold">Checklist Items</h2>
+            <Input
+              placeholder="Search items, teams, owners..."
+              value={checklistSearch}
+              onChange={(e) => setChecklistSearch(e.target.value)}
+              className="h-8 w-64 bg-background text-[12px]"
+            />
+          </div>
+          <ChecklistAddForm />
           <div className="overflow-x-auto rounded-xl border border-border/50">
             <table className="w-full min-w-[900px] text-[12px]">
               <thead>
@@ -136,18 +171,23 @@ export function ReadinessConfigPanel() {
                 </tr>
               </thead>
               <tbody>
-                {masterChecklist.map((entry) => (
-                  <ChecklistRow
-                    key={entry.id}
-                    entry={entry}
-                    onUpdate={(patch) => updateMasterItem(entry.id, patch)}
-                    onRemove={() => {
-                      if (confirm(`Remove "${entry.item}" from master checklist?`)) {
-                        removeMasterItem(entry.id);
-                      }
-                    }}
-                  />
-                ))}
+                {loadingChecklist ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                      <Loader2 className="mx-auto h-5 w-5 animate-spin opacity-50" />
+                    </td>
+                  </tr>
+                ) : filteredChecklist.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                      No checklist items match the current filter.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredChecklist.map((entry) => (
+                    <ChecklistRow key={entry.id} entry={entry} />
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -157,63 +197,73 @@ export function ReadinessConfigPanel() {
   );
 }
 
-function ChecklistRow({
-  entry,
-  onUpdate,
-  onRemove,
-}: {
-  entry: MasterChecklistEntry;
-  onUpdate: (patch: Partial<MasterChecklistEntry>) => void;
-  onRemove: () => void;
-}) {
+function ChecklistRow({ entry }: { entry: any }) {
+  const { mutate: updateItem } = useUpdateChecklistItem();
+  const { mutate: deleteItem, isPending: isDeleting } = useDeleteChecklistItem();
+
+  const handleUpdate = (patch: any) => {
+    updateItem({ id: entry.id, data: patch }, {
+      onError: (err) => toast.error(err.message)
+    });
+  };
+
+  const handleRemove = () => {
+    if (confirm(`Remove "${entry.name}" from master checklist?`)) {
+      deleteItem(entry.id, {
+        onSuccess: () => toast.success("Item removed"),
+        onError: (err) => toast.error(err.message)
+      });
+    }
+  };
+
   return (
     <tr className="border-b border-border/25 hover:bg-muted/10">
       <td className="px-3 py-2">
         <Input
-          value={entry.item}
-          onChange={(e) => onUpdate({ item: e.target.value })}
+          defaultValue={entry.name}
+          onBlur={(e) => {
+            if (e.target.value !== entry.name) handleUpdate({ name: e.target.value });
+          }}
           className="h-8 text-[12px]"
         />
       </td>
       <td className="px-2 py-2">
         <Input
-          value={entry.team}
-          onChange={(e) => onUpdate({ team: e.target.value })}
+          defaultValue={entry.team}
+          onBlur={(e) => {
+            if (e.target.value !== entry.team) handleUpdate({ team: e.target.value });
+          }}
           className="h-8 min-w-[140px] text-[12px]"
         />
       </td>
       <td className="px-2 py-2">
         <Input
-          value={entry.owner}
-          onChange={(e) => onUpdate({ owner: e.target.value })}
+          defaultValue={entry.default_owner}
+          onBlur={(e) => {
+            if (e.target.value !== entry.default_owner) handleUpdate({ default_owner: e.target.value });
+          }}
           className="h-8 min-w-[100px] text-[12px]"
         />
       </td>
       <td className="px-2 py-2">
         <select
           value={entry.category}
-          onChange={(e) => onUpdate({ category: e.target.value as Cost })}
+          onChange={(e) => handleUpdate({ category: e.target.value })}
           className="h-8 w-full rounded-md border border-border/60 bg-background px-2 text-[11px]"
         >
           {CATEGORIES.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
+            <option key={c} value={c}>{c}</option>
           ))}
         </select>
       </td>
       <td className="px-2 py-2">
         <select
           value={entry.priority}
-          onChange={(e) =>
-            onUpdate({ priority: e.target.value as MasterChecklistEntry["priority"] })
-          }
+          onChange={(e) => handleUpdate({ priority: e.target.value })}
           className="h-8 w-full rounded-md border border-border/60 bg-background px-2 text-[11px]"
         >
           {PRIORITIES.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
+            <option key={p} value={p}>{p}</option>
           ))}
         </select>
       </td>
@@ -222,39 +272,64 @@ function ChecklistRow({
           type="number"
           min={0}
           placeholder="—"
-          value={entry.defaultSlaDays ?? ""}
-          onChange={(e) => {
+          defaultValue={entry.default_sla_days ?? ""}
+          onBlur={(e) => {
             const v = e.target.value;
-            onUpdate({
-              defaultSlaDays: v === "" ? null : Math.max(0, parseInt(v, 10) || 0),
-            });
+            const num = v === "" ? null : Math.max(0, parseInt(v, 10) || 0);
+            if (num !== entry.default_sla_days) handleUpdate({ default_sla_days: num });
           }}
           className="h-8 w-20 text-center text-[12px] tabular-nums"
         />
       </td>
       <td className="px-2 py-2">
-        <Button variant="ghost" size="sm" className="text-destructive" onClick={onRemove}>
-          <Trash2 className="h-3.5 w-3.5" />
+        <Button variant="ghost" size="sm" className="text-destructive" onClick={handleRemove} disabled={isDeleting}>
+          {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
         </Button>
       </td>
     </tr>
   );
 }
 
-function ChecklistAddForm({
-  onAdd,
-}: {
-  onAdd: (entry: Omit<MasterChecklistEntry, "id">) => void;
-}) {
+function ChecklistAddForm() {
   const [item, setItem] = useState("");
-  const [team, setTeam] = useState("ITMS - Hardware / Network");
+  const [team, setTeam] = useState("");
   const [owner, setOwner] = useState("");
   const [sla, setSla] = useState("30");
+  const [category, setCategory] = useState("OPEX");
+  const [priority, setPriority] = useState("Medium");
+
+  const { mutate: createItem, isPending } = useCreateChecklistItem();
+
+  const handleAdd = () => {
+    if (!item.trim()) return;
+    createItem({
+      name: item.trim(),
+      team: team.trim() || "—",
+      default_owner: owner.trim() || "—",
+      category: category,
+      spend_type: category.includes("CAPEX") ? "CAPEX" : "OPEX", // defaulting since it's required by backend schema
+      priority: priority,
+      default_sla_days: sla === "" ? null : parseInt(sla, 10) || 30,
+      is_active: true,
+      sort_order: 0,
+    }, {
+      onSuccess: () => {
+        toast.success("Item added successfully");
+        setItem("");
+        setTeam("");
+        setOwner("");
+        setSla("30");
+        setCategory("OPEX");
+        setPriority("Medium");
+      },
+      onError: (err) => toast.error(err.message),
+    });
+  };
 
   return (
     <div className="rounded-xl border border-dashed border-primary/35 bg-primary/5 p-4">
       <h2 className="text-[14px] font-semibold">Add checklist item</h2>
-      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-7">
         <Input
           placeholder="Item name"
           value={item}
@@ -273,6 +348,24 @@ function ChecklistAddForm({
           onChange={(e) => setOwner(e.target.value)}
           className="h-9"
         />
+        <select
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          className="h-9 rounded-md border border-input bg-background px-3 text-[13px] text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          {CATEGORIES.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+        <select
+          value={priority}
+          onChange={(e) => setPriority(e.target.value)}
+          className="h-9 rounded-md border border-input bg-background px-3 text-[13px] text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          {PRIORITIES.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
         <Input
           type="number"
           placeholder="SLA days"
@@ -282,22 +375,11 @@ function ChecklistAddForm({
         />
         <Button
           className="h-9 gap-1"
-          onClick={() => {
-            if (!item.trim()) return;
-            onAdd({
-              item: item.trim(),
-              team: team.trim() || "—",
-              owner: owner.trim() || "—",
-              category: "OPEX",
-              type: "Asset Infra",
-              priority: "Medium",
-              defaultSlaDays: sla === "" ? null : parseInt(sla, 10) || 30,
-            });
-            setItem("");
-          }}
+          onClick={handleAdd}
+          disabled={isPending}
         >
-          <Plus className="h-4 w-4" />
-          Add item
+          {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+          Add
         </Button>
       </div>
     </div>

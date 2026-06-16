@@ -1,0 +1,49 @@
+# Integrate Site Readiness Backend APIs
+
+This plan outlines the approach to integrate the completed Site Readiness backend APIs into the `fleet-insights-pro` frontend, replacing the current mock data implementation.
+
+## Frontend Architecture Analysis
+Based on the inspection of the repository, the frontend is built using the following conventions:
+- **Framework:** React 19 with TanStack Start (SSR) and Vite as the bundler.
+- **Folder Structure:** Feature-based routing in `src/routes/`, reusable components in `src/components/`, and business logic/API wrappers in `src/lib/`.
+- **Routing Pattern:** File-based routing via `@tanstack/react-router`. Site Readiness already has routes set up (`readiness.tsx`, `readiness.index.tsx`, `readiness.ops.tsx`, `readiness.config.tsx`).
+- **API Service Pattern:** Native `fetch` wrappers defined in `src/lib/<module>/api.ts` (as seen in `mis/api.ts`).
+- **State Management:** `@tanstack/react-query` is installed and ideal for server state. Currently, readiness uses a local storage store (`src/lib/readiness-store.ts`) and mock data (`readiness-data.ts`). We will transition from local storage to React Query.
+- **Validation Pattern:** `zod` and `react-hook-form` are used for robust form validation.
+- **UI Components:** Built on Tailwind CSS v4 and Radix UI primitives (shadcn/ui style), utilizing `Table`, `Dialog`, `Form`, `Select`, etc., with `sonner` for toast notifications.
+- **Config/Env:** No explicit `.env` file exists yet for API bases. We will need to define one.
+
+## User Review Required
+> [!IMPORTANT]
+> **Backend URL:** The plan assumes the FastAPI backend is running locally at `http://localhost:8000`. Is this the correct base URL?
+> **Mock Data Deprecation:** The current `readiness-store.ts`, `readiness-data.ts`, and `readiness-config.ts` will be deprecated or heavily refactored to consume the live API instead of local storage.
+
+## Proposed Changes
+
+### Environment Configuration
+- Create a `.env` (or `.env.local`) file to configure the backend API base URL using Vite's env prefix (e.g., `VITE_API_URL`).
+
+### API Layer (`src/lib/readiness/`)
+- **[NEW] [api.ts](file:///c:/Users/SaudShaikh/transvolt%20data/fleet-insights-pro/src/lib/readiness/api.ts)**: Define all `fetch` wrappers for the Site Readiness endpoints (Checklist CRUD, Matrix, Overdue, Due Soon, Pending, Stats, Config, and Snapshots).
+- **[NEW] [queries.ts](file:///c:/Users/SaudShaikh/transvolt%20data/fleet-insights-pro/src/lib/readiness/queries.ts)**: Create `@tanstack/react-query` hooks (`useQuery`, `useMutation`) wrapping the API calls to handle caching, loading states, error handling, and data invalidation.
+- **[NEW] [schemas.ts](file:///c:/Users/SaudShaikh/transvolt%20data/fleet-insights-pro/src/lib/readiness/schemas.ts)**: Define Zod schemas for forms (e.g., updating a checklist item, adding a site override) matching the backend Pydantic models.
+
+### Routing & UI Updates (`src/routes/`)
+- **[MODIFY] [readiness.tsx](file:///c:/Users/SaudShaikh/transvolt%20data/fleet-insights-pro/src/routes/readiness.tsx)**: Keep the layout intact.
+- **[MODIFY] [readiness.index.tsx](file:///c:/Users/SaudShaikh/transvolt%20data/fleet-insights-pro/src/routes/readiness.index.tsx)**: Integrate the `get_dashboard_stats`, `get_overdue_readiness`, and `get_due_soon_readiness` API hooks to populate the dashboard metrics and charts. Add loading skeletons.
+- **[MODIFY] [readiness.ops.tsx](file:///c:/Users/SaudShaikh/transvolt%20data/fleet-insights-pro/src/routes/readiness.ops.tsx)**: Integrate the `get_site_readiness_matrix` API. Build the data table using actual data. Implement status update cells using mutations calling `PATCH /site_readiness/readiness/{id}`.
+- **[MODIFY] [readiness.config.tsx](file:///c:/Users/SaudShaikh/transvolt%20data/fleet-insights-pro/src/routes/readiness.config.tsx)**: Replace local config management with backend `GET /site_readiness/checklist-items` and `GET /site_readiness/config` hooks. Use forms with `zod` for creating and editing checklist items via API.
+
+### Cleanup
+- **[DELETE/REFACTOR]**: Clean up or remove `src/lib/readiness-data.ts` and `src/lib/readiness-store.ts` since data is now server-driven.
+
+## Verification Plan
+
+### Automated Tests
+- Run `npm run lint` and `npm run build` to ensure TypeScript compilation and formatting rules pass with the new files.
+
+### Manual Verification
+- Start the frontend dev server and the FastAPI backend.
+- Navigate to the Site Readiness dashboard and verify stats load correctly from the backend.
+- Navigate to the Ops view and verify the matrix table is populated. Test inline editing of a readiness item status and verify the success toast and backend persistence.
+- Navigate to the Config view, add a new Checklist Item, and verify it appears in the list.
