@@ -23,40 +23,39 @@ export interface RouteEfficiencyRankingRow {
  * Fetches route efficiency ranking from the gold_db.mart_route_efficiency_ranking SQLite table.
  */
 export async function fetchRouteEfficiencyRanking(limit = 10, filters?: Filters): Promise<RouteEfficiencyRankingRow[]> {
-  let whereClauses: string[] = [];
-  if (filters) {
-    if (filters.companies && filters.companies.length > 0) {
-      const list = filters.companies.map(c => `'${c.replace(/'/g, "''")}'`).join(",");
-      whereClauses.push(`r.companyname IN (${list})`);
-    }
-    if (filters.routes && filters.routes.length > 0) {
-      const list = filters.routes.map(r => `'${r.replace(/'/g, "''")}'`).join(",");
-      whereClauses.push(`c.route_code IN (${list})`);
-    }
+  let timeframeDays: number | null = null;
+  if (filters?.from && filters?.to) {
+    const fromDate = new Date(filters.from);
+    const toDate = new Date(filters.to);
+    const diffTime = Math.abs(toDate.getTime() - fromDate.getTime());
+    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+    
+    const presets = [7, 30, 90, 180];
+    const closestPreset = presets.find(p => Math.abs(diffDays - p) <= 2);
+    timeframeDays = closestPreset !== undefined ? closestPreset : diffDays;
   }
-
-  const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
-
-  const sql = `
-    SELECT r.*, c.route_code, c.route_name 
-    FROM mart_route_efficiency_ranking r
-    LEFT JOIN (
-      SELECT DISTINCT route_id, route_code, route_name 
-      FROM glue_catalog.gold_db.route_context_fact
-    ) c ON r.route_id = c.route_id
-    ${whereStr}
-    ORDER BY r.route_rank ASC
-    LIMIT ${limit}
-  `;
 
   const res = await fetch(GRAPHQL_API_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      query: `query GetRouteEfficiencyRanking($sql: String!) {
-        sqlQuery(sql: $sql)
+      query: `query GetRouteEfficiencyRanking($startTime: String, $endTime: String, $timeframeDays: Int) {
+        martRouteEfficiencyRanking(startTime: $startTime, endTime: $endTime, timeframeDays: $timeframeDays) {
+          routeId
+          routeName
+          kwhPerKm
+          fleetMedian
+          routeRank
+          category
+          barColor
+          tripCount
+        }
       }`,
-      variables: { sql },
+      variables: {
+        startTime: filters?.from || null,
+        endTime: filters?.to || null,
+        timeframeDays: timeframeDays,
+      },
     }),
   });
 
@@ -69,5 +68,16 @@ export async function fetchRouteEfficiencyRanking(limit = 10, filters?: Filters)
     throw new Error(json.errors[0]?.message || "GraphQL query error");
   }
 
-  return json.data?.sqlQuery || [];
+  const items = json.data?.martRouteEfficiencyRanking || [];
+  return items.map((item: any) => ({
+    route_id: item.routeId,
+    route_name: item.routeName,
+    kwh_per_km: item.kwhPerKm,
+    fleet_median: item.fleetMedian,
+    route_rank: item.routeRank,
+    category: item.category,
+    bar_color: item.barColor,
+    route_code: undefined,
+    trip_count: item.tripCount || 0,
+  }));
 }
