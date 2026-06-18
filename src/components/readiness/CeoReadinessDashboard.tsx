@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { GlobalReadinessMatrix } from "./GlobalReadinessMatrix";
 import { EditCellDialog, type EditCellValue } from "./EditCellDialog";
+import { SiteDetailsSheet } from "./SiteDetailsSheet";
 import { toast } from "sonner";
 import {
   useGlobalStats, useMatrix, usePendingQueue, useUpdateSiteReadiness, useDashboardStats
@@ -49,8 +50,10 @@ export function CeoReadinessDashboard() {
 
   const [view, setView] = useState<ViewMode>("sites");
   const [siteFilter, setSiteFilter] = useState<string>("all");
+  const [siteSearch, setSiteSearch] = useState<string>("");
   const [pendingSearch, setPendingSearch] = useState<string>("");
   const [editing, setEditing] = useState<EditingCell | null>(null);
+  const [selectedSiteForDetails, setSelectedSiteForDetails] = useState<any>(null);
 
   const openEdit = (cell: EditingCell) => setEditing(cell);
 
@@ -199,10 +202,49 @@ export function CeoReadinessDashboard() {
       {view === "matrix" ? (
         <GlobalReadinessMatrix />
       ) : view === "sites" ? (
-        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-          {siteCards.map((site) => (
-            <SiteCard key={site.site} site={site} onEdit={openEdit} />
-          ))}
+        <section className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/50 bg-card/50 px-5 py-4">
+            <div>
+              <h2 className="text-[15px] font-semibold">Sites Overview</h2>
+              <p className="text-[12px] text-muted-foreground">Filter by specific sites</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <Input
+                placeholder="Search sites by name..."
+                value={siteSearch}
+                onChange={(e) => setSiteSearch(e.target.value)}
+                className="h-9 w-56 bg-background/60 text-[12px]"
+              />
+              <select
+                value={siteFilter} onChange={(e) => setSiteFilter(e.target.value)}
+                className="h-9 rounded-lg border border-border/60 bg-background/60 px-3 text-[12px] outline-none focus:border-primary/40"
+              >
+                <option value="all">All sites</option>
+                {sitesList.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+            {(() => {
+              const filtered = siteCards
+                .filter(s => siteFilter === "all" || s.site === siteFilter)
+                .filter(s => !siteSearch || s.site.toLowerCase().includes(siteSearch.toLowerCase()));
+              
+              if (filtered.length === 0) {
+                return (
+                  <div className="col-span-full rounded-2xl border border-dashed border-border/60 bg-card/20 py-16 text-center">
+                    <p className="text-[13px] text-muted-foreground">No sites found matching your search.</p>
+                    <Button variant="link" onClick={() => { setSiteSearch(""); setSiteFilter("all"); }} className="mt-2 text-[12px]">
+                      Clear filters
+                    </Button>
+                  </div>
+                );
+              }
+              return filtered.map((site) => (
+                <SiteCard key={site.site} site={site} onEdit={openEdit} onViewDetails={() => setSelectedSiteForDetails(site)} />
+              ));
+            })()}
+          </div>
         </section>
       ) : (
         <section className="rounded-2xl border border-border/50 bg-card/50">
@@ -254,17 +296,28 @@ export function CeoReadinessDashboard() {
           isSaving={isUpdating}
         />
       )}
+
+      <SiteDetailsSheet 
+        site={selectedSiteForDetails} 
+        open={!!selectedSiteForDetails} 
+        onClose={() => setSelectedSiteForDetails(null)} 
+        onEdit={openEdit} 
+      />
     </div>
   );
 }
 
-function SiteCard({ site, onEdit }: { site: any; onEdit: (cell: EditingCell) => void; }) {
+function SiteCard({ site, onEdit, onViewDetails }: { site: any; onEdit: (cell: EditingCell) => void; onViewDetails: () => void; }) {
   const pct = Math.round(site.readinessPct * 100);
   const barColor = pct >= 70 ? "bg-success" : pct >= 45 ? "bg-primary" : pct >= 20 ? "bg-warning" : "bg-destructive";
 
   return (
     <article className="flex flex-col rounded-2xl border border-border/50 bg-card/60">
-      <div className="border-b border-border/40 px-4 py-4">
+      <button 
+        type="button" 
+        onClick={onViewDetails}
+        className="w-full text-left border-b border-border/40 px-4 py-4 transition-colors hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+      >
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -285,7 +338,7 @@ function SiteCard({ site, onEdit }: { site: any; onEdit: (cell: EditingCell) => 
             <AlertTriangle className="h-3 w-3" /> {site.overdueCount} overdue
           </p>
         )}
-      </div>
+      </button>
 
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="border-b border-border/30 bg-success/5 px-4 py-2">

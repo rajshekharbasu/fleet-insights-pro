@@ -73,9 +73,11 @@ function CardTitle({ eyebrow, title, icon: Icon, action }: {
 }
 
 export function SiteReadinessDashboard() {
-  const { data: stats, isLoading: loadingStats } = useDashboardStats();
+  const [projectFilter, setProjectFilter] = useState<string>("all");
+
+  const { data: stats, isLoading: loadingStats } = useDashboardStats(projectFilter !== "all" ? projectFilter : undefined);
   const { data: snapshots } = useSnapshots();
-  const { data: matrixItems, isLoading: loadingMatrix } = useMatrix();
+  const { data: matrixItems, isLoading: loadingMatrix } = useMatrix(undefined, projectFilter !== "all" ? projectFilter : undefined);
   const { data: sitesDropdown } = useSites();
   const { mutate: updateReadiness, isPending: isUpdating } = useUpdateSiteReadiness();
 
@@ -85,16 +87,56 @@ export function SiteReadinessDashboard() {
 
   const [editing, setEditing] = useState<{ id: string; itemName: string; siteName: string; siteId: string; value: EditCellValue } | null>(null);
 
+  const projectList = useMemo(() => {
+    if (!sitesDropdown) return [];
+    const projects = new Map();
+    sitesDropdown.forEach(s => {
+      if (s.project_id && s.project_name) {
+        projects.set(s.project_id, s.project_name);
+      }
+    });
+    return Array.from(projects.entries()).map(([id, name]) => ({ id, name }));
+  }, [sitesDropdown]);
+
   const weekly = useMemo(() => {
     if (!snapshots || snapshots.length === 0) return [];
-    return [...snapshots]
-      .filter(s => s.site_id === null)
-      .sort((a,b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime())
+    
+    if (projectFilter === "all") {
+      return [...snapshots]
+        .filter(s => s.site_id === null)
+        .sort((a, b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime())
+        .map(s => ({
+          week: new Date(s.snapshot_date).toLocaleDateString(undefined, { day: "numeric", month: "short" }),
+          overall: +(s.readiness_pct).toFixed(1)
+        }));
+    }
+
+    const projectSiteIds = new Set(
+      (sitesDropdown || []).filter(s => s.project_id === projectFilter).map(s => s.id)
+    );
+
+    const byDate = new Map<string, { total: number, done: number }>();
+    snapshots
+      .filter(s => s.site_id && projectSiteIds.has(s.site_id))
+      .forEach(s => {
+        const d = s.snapshot_date;
+        if (!byDate.has(d)) byDate.set(d, { total: 0, done: 0 });
+        const stats = byDate.get(d)!;
+        stats.total += s.total_items;
+        stats.done += s.done_items;
+      });
+
+    return Array.from(byDate.entries())
+      .map(([date, stats]) => ({
+        date,
+        overall: stats.total > 0 ? (stats.done / stats.total) * 100 : 0
+      }))
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
       .map(s => ({
-        week: new Date(s.snapshot_date).toLocaleDateString(undefined, { day: "numeric", month: "short" }),
-        overall: +(s.readiness_pct).toFixed(1)
+        week: new Date(s.date).toLocaleDateString(undefined, { day: "numeric", month: "short" }),
+        overall: +s.overall.toFixed(1)
       }));
-  }, [snapshots]);
+  }, [snapshots, projectFilter, sitesDropdown]);
 
   const deadlines = useMemo(() => {
     if (!matrixItems) return [];
@@ -213,7 +255,15 @@ export function SiteReadinessDashboard() {
               {tableRows.length} workstreams.
             </p>
           </div>
-          <div className="flex items-center gap-5">
+          <div className="flex flex-wrap items-center gap-5">
+            <select
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              className="h-9 cursor-pointer rounded-lg border border-border/60 bg-background/80 px-3 text-[13px] outline-none transition hover:border-primary/40 focus:border-primary/40"
+            >
+              <option value="all">Company-Wide (All Projects)</option>
+              {projectList.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
             <ProgressRing pct={overallPct} />
             <div className="space-y-1.5 text-[12px]">
               <Stat label="Items in scope" value={String(stats.items_in_scope)} />
