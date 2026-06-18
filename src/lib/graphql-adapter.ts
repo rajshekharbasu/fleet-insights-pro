@@ -24,6 +24,8 @@ export function aggregateGraphQlKpis(records: DailyKpiRecord[]): KpiSummary {
   if (!records || records.length === 0) {
     return {
       netKwh: 0,
+      grossKwh: 0,
+      grossKwhPerKm: 0,
       kwhPerKm: 0,
       regenRatio: 0,
       socDropPerKm: 0,
@@ -35,6 +37,7 @@ export function aggregateGraphQlKpis(records: DailyKpiRecord[]): KpiSummary {
   }
 
   let totalNetKwh = 0;
+  let totalGrossKwh = 0;
   let totalTrips = 0;
   let totalAnomalies = 0;
   let totalDistance = 0;
@@ -45,6 +48,9 @@ export function aggregateGraphQlKpis(records: DailyKpiRecord[]): KpiSummary {
 
   for (const r of records) {
     totalNetKwh += r.total_kwh;
+    // Calculate gross energy: Gross = Net / (1 - RegenRatio)
+    const gross = r.regen_ratio < 0.99 ? r.total_kwh / (1 - r.regen_ratio) : r.total_kwh;
+    totalGrossKwh += gross;
     totalTrips += r.trip_count;
     totalAnomalies += r.anomaly_count;
 
@@ -63,6 +69,8 @@ export function aggregateGraphQlKpis(records: DailyKpiRecord[]): KpiSummary {
 
   return {
     netKwh: totalNetKwh,
+    grossKwh: totalGrossKwh,
+    grossKwhPerKm: totalDistance > 0 ? totalGrossKwh / totalDistance : 0,
     kwhPerKm: totalDistance > 0 ? totalNetKwh / totalDistance : 0,
     // The UI multiplies regenRatio by 100, so we store it as a decimal (e.g. 0.12)
     regenRatio: totalNetKwh > 0 ? sumRegenRatioWeighted / totalNetKwh : 0,

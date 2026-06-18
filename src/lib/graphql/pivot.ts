@@ -109,55 +109,75 @@ export async function fetchDynamicPivot(
   dim: PivotDim,
   filters: Filters,
 ): Promise<PivotRow[]> {
-  let whereClauses: string[] = [];
+  let pivotDim = "";
+  let keyCol = "entity_id";
+  let labelCol = "COALESCE(entity_name, entity_id)";
+
+  if (dim === "driver_name") {
+    pivotDim = "driver";
+    keyCol = "entity_name";
+    labelCol = "entity_name";
+  } else if (dim === "route_code") {
+    pivotDim = "route";
+    keyCol = "entity_id";
+    labelCol = "COALESCE(entity_name, entity_id)";
+  } else if (dim === "vehiclenumber") {
+    pivotDim = "vehicle";
+    keyCol = "entity_id";
+    labelCol = "COALESCE(entity_name, entity_id)";
+  } else if (dim === "company_name") {
+    pivotDim = "company";
+    keyCol = "companyname";
+    labelCol = "companyname";
+  } else if (dim === "scheduling_date") {
+    pivotDim = "company";
+    keyCol = "SUBSTR(snapshot_date, 1, 10)";
+    labelCol = "SUBSTR(snapshot_date, 1, 10)";
+  }
+
+  let whereClauses: string[] = [`pivot_dimension = '${pivotDim}'`];
+
   if (filters) {
     if (filters.from) {
-      whereClauses.push(`scheduling_date >= '${filters.from}'`);
+      whereClauses.push(`snapshot_date >= '${filters.from}'`);
     }
     if (filters.to) {
-      whereClauses.push(`scheduling_date <= '${filters.to}'`);
+      whereClauses.push(`snapshot_date <= '${filters.to}'`);
     }
     if (filters.companies && filters.companies.length > 0) {
       const list = filters.companies.map(c => `'${c.replace(/'/g, "''")}'`).join(",");
       whereClauses.push(`companyname IN (${list})`);
     }
-    if (filters.drivers && filters.drivers.length > 0) {
+    if (dim === "driver_name" && filters.drivers && filters.drivers.length > 0) {
       const list = filters.drivers.map(d => `'${d.replace(/'/g, "''")}'`).join(",");
-      whereClauses.push(`driver_name IN (${list})`);
+      whereClauses.push(`entity_name IN (${list})`);
     }
-    if (filters.routes && filters.routes.length > 0) {
+    if (dim === "route_code" && filters.routes && filters.routes.length > 0) {
       const list = filters.routes.map(r => `'${r.replace(/'/g, "''")}'`).join(",");
-      whereClauses.push(`route_code IN (${list})`);
+      whereClauses.push(`entity_id IN (${list})`);
     }
-    if (filters.vehicles && filters.vehicles.length > 0) {
+    if (dim === "vehiclenumber" && filters.vehicles && filters.vehicles.length > 0) {
       const list = filters.vehicles.map(v => `'${v.replace(/'/g, "''")}'`).join(",");
-      whereClauses.push(`vehiclenumber IN (${list})`);
+      whereClauses.push(`entity_id IN (${list})`);
     }
   }
 
   const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
-  let dbCol = "";
-  if (dim === "driver_name") dbCol = "driver_name";
-  else if (dim === "route_code") dbCol = "route_code";
-  else if (dim === "vehiclenumber") dbCol = "vehiclenumber";
-  else if (dim === "company_name") dbCol = "companyname";
-  else if (dim === "scheduling_date") dbCol = "SUBSTR(scheduling_date, 1, 10)";
-
   const sql = `
     SELECT 
-      ${dbCol} as key,
-      ${dbCol} as label,
-      COUNT(*) as trips,
-      SUM(distance_km_odo_trip) as distance,
-      SUM(net_kwh_consumed) as netKwh,
-      CASE WHEN SUM(distance_km_odo_trip) > 0 THEN SUM(net_kwh_consumed) / SUM(distance_km_odo_trip) ELSE 0 END as kwhPerKm,
-      CASE WHEN SUM(gross_discharge_kwh) > 0 THEN SUM(regen_kwh) / SUM(gross_discharge_kwh) * 100 ELSE 0 END as regenRatio,
-      CASE WHEN SUM(net_kwh_consumed) > 0 THEN SUM(idle_kwh_estimated) / SUM(net_kwh_consumed) * 100 ELSE 0 END as idleShare,
-      SUM(CASE WHEN efficiency_anomaly_flag = 1 OR efficiency_anomaly_flag = 'true' THEN 1 ELSE 0 END) as anomalies
-    FROM trip_efficiency_fact
+      ${keyCol} as key,
+      ${labelCol} as label,
+      SUM(trip_count) as trips,
+      SUM(total_distance_km) as distance,
+      SUM(total_net_kwh) as netKwh,
+      CASE WHEN SUM(total_distance_km) > 0 THEN SUM(total_net_kwh) / SUM(total_distance_km) ELSE 0 END as kwhPerKm,
+      CASE WHEN SUM(trip_count) > 0 THEN SUM(avg_regen_pct * trip_count) / SUM(trip_count) ELSE 0 END as regenRatio,
+      CASE WHEN SUM(trip_count) > 0 THEN SUM(avg_idle_pct * trip_count) / SUM(trip_count) ELSE 0 END as idleShare,
+      SUM(COALESCE(total_anomalies, 0)) as anomalies
+    FROM mart_pivot_exploration_fact
     ${whereStr}
-    GROUP BY ${dbCol}
+    GROUP BY ${keyCol}, ${labelCol}
     ORDER BY trips DESC
   `;
 

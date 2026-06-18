@@ -107,7 +107,7 @@ export function RankingList({ rowsByDim, filters }: { rowsByDim: (dim: PivotDim)
             <span className="num font-medium text-primary">
               ({metric.format(medianVal)})
             </span>
-            {" "}— min. 3 trips.
+            {" "}— min. 50 trips.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

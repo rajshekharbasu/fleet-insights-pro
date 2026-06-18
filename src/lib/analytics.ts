@@ -45,6 +45,8 @@ export function previousPeriod(f: Filters): Filters {
 
 export interface KpiSummary {
   netKwh: number;
+  grossKwh: number;
+  grossKwhPerKm: number;
   kwhPerKm: number;
   regenRatio: number;
   socDropPerKm: number;
@@ -56,7 +58,7 @@ export interface KpiSummary {
 
 export function summarize(trips: Trip[]): KpiSummary {
   if (!trips.length) {
-    return { netKwh: 0, kwhPerKm: 0, regenRatio: 0, socDropPerKm: 0, idleSharePct: 0, anomalyRatePct: 0, totalTrips: 0, totalDistance: 0 };
+    return { netKwh: 0, grossKwh: 0, grossKwhPerKm: 0, kwhPerKm: 0, regenRatio: 0, socDropPerKm: 0, idleSharePct: 0, anomalyRatePct: 0, totalTrips: 0, totalDistance: 0 };
   }
   const netKwh = trips.reduce((s, t) => s + t.net_kwh_consumed, 0);
   const totalDistance = trips.reduce((s, t) => s + t.trip_distance_km, 0);
@@ -68,6 +70,8 @@ export function summarize(trips: Trip[]): KpiSummary {
 
   return {
     netKwh,
+    grossKwh: grossDischarge,
+    grossKwhPerKm: totalDistance > 0 ? grossDischarge / totalDistance : 0,
     kwhPerKm: netKwh / totalDistance,
     regenRatio: regen / grossDischarge,
     socDropPerKm: socDrop / totalDistance,
@@ -92,8 +96,10 @@ export function trendByDay(trips: Trip[]) {
       return {
         date,
         kwhPerKm: +s.kwhPerKm.toFixed(3),
+        grossKwhPerKm: +s.grossKwhPerKm.toFixed(3),
         regenRatio: +(s.regenRatio * 100).toFixed(2),
         netKwh: +s.netKwh.toFixed(1),
+        grossKwh: +s.grossKwh.toFixed(1),
         socDropPerKm: +s.socDropPerKm.toFixed(3),
         idleShare: +s.idleSharePct.toFixed(2),
         trips: s.totalTrips,

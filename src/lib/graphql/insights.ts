@@ -4,14 +4,22 @@ import { type DailyInsight, type InsightAudience, type InsightSeverity } from ".
 export interface GraphQlInsight {
   insightDate: string;
   domain: string;
+  insightType?: string;
   severity: string;
   insightTitle: string;
   insightDescription: string;
-  metricValue: number;
-  baselineValue: number;
+  metricValue: number | null;
+  baselineValue: number | null;
   metricUnit: string;
-  trendDirection: string;
   entityCount: number;
+}
+
+function parseSqlQueryResult<T>(result: T[] | { error?: string } | null | undefined): T[] {
+  if (!result) return [];
+  if (!Array.isArray(result)) {
+    throw new Error(result.error || "GraphQL sqlQuery error");
+  }
+  return result;
 }
 
 /**
@@ -20,18 +28,26 @@ export interface GraphQlInsight {
 export async function fetchMartInsightsFact(limit = 20): Promise<GraphQlInsight[]> {
   const sql = `
     SELECT 
-      snapshot_date as insightDate,
+      insight_date as insightDate,
       domain,
+      insight_type as insightType,
       severity,
-      insight_title as insightTitle,
-      insight_description as insightDescription,
+      title as insightTitle,
+      subtitle as insightDescription,
       metric_value as metricValue,
       baseline_value as baselineValue,
       metric_unit as metricUnit,
-      trend_direction as trendDirection,
-      entity_count as entityCount
+      vehicle_count as entityCount
     FROM mart_insights_fact
-    ORDER BY created_at DESC
+    WHERE COALESCE(suppressed, 'no') = 'no'
+    ORDER BY
+      snapshot_date DESC,
+      CASE severity
+        WHEN 'critical' THEN 1
+        WHEN 'high' THEN 2
+        WHEN 'medium' THEN 3
+        ELSE 4
+      END
     LIMIT ${limit}
   `;
 
@@ -55,27 +71,37 @@ export async function fetchMartInsightsFact(limit = 20): Promise<GraphQlInsight[
     throw new Error(json.errors[0]?.message || "GraphQL query error");
   }
 
-  return json.data?.sqlQuery || [];
+  return parseSqlQueryResult<GraphQlInsight>(json.data?.sqlQuery);
+}
+
+function resolveInsightDomain(raw: GraphQlInsight): string {
+  const type = raw.insightType?.toLowerCase() ?? "";
+  if (type === "thermal") return "thermal";
+  if (type === "voltage") return "battery";
+  if (type === "efficiency") return "fleet";
+  if (type === "idle") return "depot";
+  return raw.domain.toLowerCase();
 }
 
 /**
  * Maps GraphQL insights response to frontend DailyInsight type
  */
 export function mapGraphQlInsight(raw: GraphQlInsight, index: number): DailyInsight {
-  const id = `graphql-insight-${raw.domain.toLowerCase()}-${index}`;
+  const dom = resolveInsightDomain(raw);
+  const id = `graphql-insight-${dom}-${index}`;
   
-  // Severity mapping
+  // Severity mapping (mart uses critical / high / medium / low)
   let severity: InsightSeverity = "info";
-  if (raw.severity.toLowerCase() === "critical") severity = "critical";
-  else if (raw.severity.toLowerCase() === "warning") severity = "warning";
+  const sev = raw.severity.toLowerCase();
+  if (sev === "critical") severity = "critical";
+  else if (sev === "high" || sev === "medium" || sev === "warning") severity = "warning";
   
   // Audience mapping based on domain
-  const dom = raw.domain.toLowerCase();
   let audience: InsightAudience[] = ["operations"];
   if (dom === "driver" || dom === "route" || dom === "drivers" || dom === "routes") {
     audience = ["operations", "revenue"];
-  } else if (dom === "fleet") {
-    audience = ["revenue"];
+  } else if (dom === "fleet" || dom === "depot") {
+    audience = ["operations", "revenue"];
   }
 
   // Recommended actions mapping
@@ -100,8 +126,15 @@ export function mapGraphQlInsight(raw: GraphQlInsight, index: number): DailyInsi
     deepLink = "/charging#bus-intel";
   }
 
+  const metricValue = raw.metricValue ?? 0;
+
   // Format metric and baseline strings cleanly
-  const metricValFmt = typeof raw.metricValue === "number" ? parseFloat(raw.metricValue.toFixed(2)) : raw.metricValue;
+  const metricValFmt =
+    typeof raw.metricValue === "number"
+      ? parseFloat(raw.metricValue.toFixed(2))
+      : raw.entityCount > 0
+        ? raw.entityCount
+        : null;
   
   // Override baseline value for thermal domain to 40, and pack imbalance to 150
   const overrideBaseline = dom === "thermal"
@@ -111,14 +144,19 @@ export function mapGraphQlInsight(raw: GraphQlInsight, index: number): DailyInsi
       : raw.baselineValue;
   const baseValFmt = typeof overrideBaseline === "number" ? parseFloat(overrideBaseline.toFixed(2)) : overrideBaseline;
   
-  const metric = `${metricValFmt} ${raw.metricUnit}`;
+  const metric =
+    typeof metricValFmt === "number" && raw.metricValue !== null
+      ? `${metricValFmt} ${raw.metricUnit}`
+      : raw.entityCount > 0
+        ? `${raw.entityCount} buses`
+        : "—";
   const vsBaseline = overrideBaseline !== undefined && overrideBaseline !== null
     ? `vs ${baseValFmt} ${raw.metricUnit}`
     : "no baseline";
 
   // Calculate delta percentage
   let deltaPct = 0;
-  if (overrideBaseline && raw.metricValue) {
+  if (overrideBaseline && raw.metricValue !== null && raw.metricValue !== undefined) {
     deltaPct = ((raw.metricValue - overrideBaseline) / overrideBaseline) * 100;
   }
 
@@ -126,16 +164,23 @@ export function mapGraphQlInsight(raw: GraphQlInsight, index: number): DailyInsi
   // Usually, higher temperatures, energy consumption (kWh/km), disconnects, or cell imbalance are bad.
   const positiveIsGood = dom === "charging" && raw.metricUnit === "sessions";
 
+  const trendDirection =
+    raw.metricValue !== null && overrideBaseline !== null && overrideBaseline !== undefined
+      ? raw.metricValue > overrideBaseline
+        ? "up"
+        : "down"
+      : "flat";
+
   // Generate a realistic 30-day trend chart
-  const trend = generateTrend(raw.metricValue, overrideBaseline, raw.trendDirection, 30);
+  const trend = generateTrend(metricValue, overrideBaseline ?? metricValue * 0.9, trendDirection, 30);
   const spark = trend.slice(-14).map((t) => t.value);
 
   // Generate supporting data
   const { evidence, columns } = generateEvidence(
-    raw.domain,
+    dom,
     raw.entityCount,
-    raw.metricValue,
-    overrideBaseline,
+    metricValue,
+    overrideBaseline ?? 0,
     raw.metricUnit
   );
 
@@ -319,6 +364,12 @@ export interface GraphQlInsightFact {
  * Maps summary list titles to the corresponding detail titles used in insightsFact query.
  */
 export function mapInsightTitleForDetails(title: string): string {
+  const lower = title.toLowerCase();
+  if (lower.includes("thermal")) return "High battery temperature detected";
+  if (lower.includes("voltage")) return "Abnormal pack voltage detected";
+  if (lower.includes("efficiency")) return "Energy efficiency anomaly detected";
+  if (lower.includes("idle")) return "High idle energy loss detected";
+  if (lower.includes("pack imbalance")) return "Battery pack imbalance detected";
   switch (title) {
     case "46 buses with pack imbalance":
       return "Battery pack imbalance detected";
@@ -341,7 +392,7 @@ export async function fetchInsightsFact(
   const sql = `
     SELECT 
       entity_id as entityId,
-      entity_name as entityName,
+      entity_id as entityName,
       domain,
       severity,
       metric_value as metricValue,
@@ -350,6 +401,7 @@ export async function fetchInsightsFact(
       created_at as createdAt
     FROM insights_fact
     WHERE insight_title = '${insightTitle.replace(/'/g, "''")}'
+    ORDER BY created_at DESC
     LIMIT ${limit}
   `;
 
@@ -373,5 +425,5 @@ export async function fetchInsightsFact(
     throw new Error(json.errors[0]?.message || "GraphQL query error");
   }
 
-  return json.data?.sqlQuery || [];
+  return parseSqlQueryResult<GraphQlInsightFact>(json.data?.sqlQuery);
 }
