@@ -6,9 +6,9 @@ export const readinessKeys = {
   all: ["site-readiness"] as const,
   sites: () => [...readinessKeys.all, "sites"] as const,
   checklists: () => [...readinessKeys.all, "checklists"] as const,
-  matrix: (siteId?: string) => [...readinessKeys.all, "matrix", siteId] as const,
-  pending: (siteId?: string) => [...readinessKeys.all, "pending", siteId] as const,
-  dashboardStats: () => [...readinessKeys.all, "dashboardStats"] as const,
+  matrix: (siteId?: string, projectId?: string) => [...readinessKeys.all, "matrix", siteId, projectId] as const,
+  pending: (siteId?: string, projectId?: string) => [...readinessKeys.all, "pending", siteId, projectId] as const,
+  dashboardStats: (projectId?: string) => [...readinessKeys.all, "dashboardStats", projectId] as const,
   globalStats: () => [...readinessKeys.all, "globalStats"] as const,
   snapshots: () => [...readinessKeys.all, "snapshots"] as const,
 };
@@ -71,24 +71,24 @@ export function useDeleteChecklistItem() {
   });
 }
 
-export function useMatrix(siteId?: string) {
+export function useMatrix(siteId?: string, projectId?: string) {
   return useQuery({
-    queryKey: readinessKeys.matrix(siteId),
-    queryFn: () => api.fetchMatrix(siteId),
+    queryKey: readinessKeys.matrix(siteId, projectId),
+    queryFn: () => api.fetchMatrix(siteId, projectId),
   });
 }
 
-export function usePendingQueue(siteId?: string) {
+export function usePendingQueue(siteId?: string, projectId?: string) {
   return useQuery({
-    queryKey: readinessKeys.pending(siteId),
-    queryFn: () => api.fetchPendingQueue(siteId),
+    queryKey: readinessKeys.pending(siteId, projectId),
+    queryFn: () => api.fetchPendingQueue(siteId, projectId),
   });
 }
 
-export function useDashboardStats() {
+export function useDashboardStats(projectId?: string) {
   return useQuery({
-    queryKey: readinessKeys.dashboardStats(),
-    queryFn: () => api.fetchDashboardStats(),
+    queryKey: readinessKeys.dashboardStats(projectId),
+    queryFn: () => api.fetchDashboardStats(projectId),
   });
 }
 

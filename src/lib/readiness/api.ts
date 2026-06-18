@@ -133,6 +133,8 @@ export interface SiteDropdownItem {
   location?: string;
   is_active?: boolean;
   site_type?: string;
+  project_id?: string;
+  project_name?: string;
 }
 
 // --- API Functions ---
@@ -153,7 +155,9 @@ export async function fetchSitesDropdown(): Promise<SiteDropdownItem[]> {
       code: site.code,
       location: site.location,
       is_active: site.is_active,
-      site_type: dropItem?.site_type || "—"
+      site_type: dropItem?.site_type || "—",
+      project_id: site.project_id,
+      project_name: site.project_name
     };
   });
 }
@@ -190,18 +194,25 @@ export async function deleteChecklistItem(id: string): Promise<void> {
   });
 }
 
-export async function fetchMatrix(siteId?: string): Promise<SiteReadinessMatrixItem[]> {
-  const url = siteId ? `/site-readiness/readiness/matrix?site_id=${siteId}` : "/site-readiness/readiness/matrix";
+export async function fetchMatrix(siteId?: string, projectId?: string): Promise<SiteReadinessMatrixItem[]> {
+  const params = new URLSearchParams();
+  if (siteId) params.append("site_id", siteId);
+  if (projectId) params.append("project_id", projectId);
+  const url = `/site-readiness/readiness/matrix${params.toString() ? '?' + params.toString() : ''}`;
   return fetchApi(url).then(res => res.data);
 }
 
-export async function fetchPendingQueue(siteId?: string): Promise<SiteReadinessMatrixItem[]> {
-  const url = siteId ? `/site-readiness/readiness/pending?site_id=${siteId}` : "/site-readiness/readiness/pending";
+export async function fetchPendingQueue(siteId?: string, projectId?: string): Promise<SiteReadinessMatrixItem[]> {
+  const params = new URLSearchParams();
+  if (siteId) params.append("site_id", siteId);
+  if (projectId) params.append("project_id", projectId);
+  const url = `/site-readiness/readiness/pending${params.toString() ? '?' + params.toString() : ''}`;
   return fetchApi(url).then(res => res.data);
 }
 
-export async function fetchDashboardStats(): Promise<DashboardStatsResponse> {
-  return fetchApi("/site-readiness/readiness/stats/dashboard").then(res => res.data);
+export async function fetchDashboardStats(projectId?: string): Promise<DashboardStatsResponse> {
+  const url = projectId ? `/site-readiness/readiness/stats/dashboard?project_id=${projectId}` : "/site-readiness/readiness/stats/dashboard";
+  return fetchApi(url).then(res => res.data);
 }
 
 export async function fetchGlobalStats(): Promise<any> {
