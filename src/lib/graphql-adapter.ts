@@ -1,84 +1,195 @@
-export interface DailyKpiRecord {
-  company_id: string;
-  company_name: string;
-  scheduling_date: string;
-  kwh_per_km: number;
-  regen_ratio: number;
-  idle_ratio: number;
-  soc_per_km: number;
-  total_kwh: number;
-  trip_count: number;
-  anomaly_count: number;
-  anomaly_rate_pct: number;
-  avg_route_difficulty: number;
+import { KpiSummary } from "./analytics";
+
+export interface FleetKpiRecord {
+  companyid: number;
+  companyname: string;
+  curr_trip_count: number;
+  curr_active_drivers: number;
+  curr_active_vehicles: number;
+  curr_total_net_kwh: number;
+  curr_total_gross_kwh: number;
+  curr_total_regen_kwh: number;
+  curr_total_distance_km: number;
+  curr_gross_kwh_per_km: number;
+  curr_net_kwh_per_km: number;
+  curr_regen_pct: number;
+  curr_idle_pct: number;
+  curr_soc_drop_per_km: number;
+  curr_median_net_kwh_per_km: number;
+  curr_median_regen_pct: number;
+  curr_median_idle_pct: number;
+  curr_median_soc_drop_per_km: number;
+  prev_trip_count: number;
+  prev_total_net_kwh: number;
+  prev_total_gross_kwh: number;
+  prev_total_distance_km: number;
+  prev_gross_kwh_per_km: number;
+  prev_net_kwh_per_km: number;
+  prev_regen_pct: number;
+  prev_idle_pct: number;
+  prev_soc_drop_per_km: number;
+  prev_median_net_kwh_per_km: number;
+  prev_median_regen_pct: number;
+  prev_median_idle_pct: number;
+  prev_median_soc_drop_per_km: number;
+  current_period_start: string;
+  current_period_end: string;
+  prev_period_start: string;
+  prev_period_end: string;
   snapshot_date: string;
 }
 
-import { KpiSummary } from "./analytics";
+export interface DailyTrendRecord {
+  companyid: number;
+  companyname: string;
+  scheduling_date: string;
+  gross_kwh_per_km: number;
+  net_kwh_per_km: number;
+  regen_pct: number;
+  total_net_kwh: number;
+  total_gross_kwh: number;
+  bms_trip_count: number;
+  idle_pct: number;
+  soc_per_km: number;
+  total_trip_count: number;
+  snapshot_date: string;
+}
 
-/**
- * Aggregates an array of daily GraphQL KPI records into a single KpiSummary
- * that the dashboard Overview section can use.
- */
-export function aggregateGraphQlKpis(records: DailyKpiRecord[]): KpiSummary {
-  if (!records || records.length === 0) {
-    return {
-      netKwh: 0,
-      grossKwh: 0,
-      grossKwhPerKm: 0,
-      kwhPerKm: 0,
-      regenRatio: 0,
-      socDropPerKm: 0,
-      idleSharePct: 0,
-      anomalyRatePct: 0,
-      totalTrips: 0,
-      totalDistance: 0,
-    };
-  }
+export interface FleetKpiMedians {
+  kwhPerKm: number;
+  regenRatio: number;
+  idleShare: number;
+  socDropPerKm: number;
+}
 
-  let totalNetKwh = 0;
-  let totalGrossKwh = 0;
-  let totalTrips = 0;
-  let totalAnomalies = 0;
-  let totalDistance = 0;
+export interface FleetKpiAggregate {
+  current: KpiSummary;
+  previous: KpiSummary;
+  medians: FleetKpiMedians;
+}
 
-  let sumRegenRatioWeighted = 0;
-  let sumIdleRatioWeighted = 0;
-  let sumSocPerKmWeighted = 0;
+const EMPTY_SUMMARY: KpiSummary = {
+  netKwh: 0,
+  grossKwh: 0,
+  grossKwhPerKm: 0,
+  kwhPerKm: 0,
+  regenRatio: 0,
+  socDropPerKm: 0,
+  idleSharePct: 0,
+  anomalyRatePct: 0,
+  totalTrips: 0,
+  totalDistance: 0,
+};
 
-  for (const r of records) {
-    totalNetKwh += r.total_kwh;
-    // Calculate gross energy: Gross = Net / (1 - RegenRatio)
-    const gross = r.regen_ratio < 0.99 ? r.total_kwh / (1 - r.regen_ratio) : r.total_kwh;
-    totalGrossKwh += gross;
-    totalTrips += r.trip_count;
-    totalAnomalies += r.anomaly_count;
-
-    // Approximate distance since distance isn't directly provided:
-    // total_kwh = kwh_per_km * distance  =>  distance = total_kwh / kwh_per_km
-    const distance = r.kwh_per_km > 0 ? r.total_kwh / r.kwh_per_km : 0;
-    totalDistance += distance;
-
-    // Weighting ratios by distance or trips to get an accurate overall average
-    // r.regen_ratio is a fraction in the DB (e.g. 0.12 for 12%), so we weight it directly
-    sumRegenRatioWeighted += r.regen_ratio * r.total_kwh; 
-    // r.idle_ratio is a fraction in the DB (e.g. 0.41 for 41%), we weight it and scale to percentage for the UI
-    sumIdleRatioWeighted += (r.idle_ratio * 100) * r.total_kwh; 
-    sumSocPerKmWeighted += r.soc_per_km * distance;
-  }
+function buildPeriodSummary(
+  totalNetKwh: number,
+  totalGrossKwh: number,
+  totalTrips: number,
+  totalDistance: number,
+  sumRegenPctWeighted: number,
+  sumIdlePctWeighted: number,
+  sumSocWeighted: number,
+): KpiSummary {
+  if (totalTrips === 0 && totalNetKwh === 0) return { ...EMPTY_SUMMARY };
 
   return {
     netKwh: totalNetKwh,
     grossKwh: totalGrossKwh,
     grossKwhPerKm: totalDistance > 0 ? totalGrossKwh / totalDistance : 0,
     kwhPerKm: totalDistance > 0 ? totalNetKwh / totalDistance : 0,
-    // The UI multiplies regenRatio by 100, so we store it as a decimal (e.g. 0.12)
-    regenRatio: totalNetKwh > 0 ? sumRegenRatioWeighted / totalNetKwh : 0,
-    socDropPerKm: totalDistance > 0 ? sumSocPerKmWeighted / totalDistance : 0,
-    // The UI displays idleSharePct directly (so 41.8% should be 41.8)
-    idleSharePct: totalNetKwh > 0 ? sumIdleRatioWeighted / totalNetKwh : 0,
-    anomalyRatePct: totalTrips > 0 ? (totalAnomalies / totalTrips) * 100 : 0,
+    // UI multiplies regenRatio by 100; mart stores regen as percentage
+    regenRatio: totalNetKwh > 0 ? sumRegenPctWeighted / totalNetKwh / 100 : 0,
+    socDropPerKm: totalDistance > 0 ? sumSocWeighted / totalDistance : 0,
+    idleSharePct: totalNetKwh > 0 ? sumIdlePctWeighted / totalNetKwh : 0,
+    anomalyRatePct: 0,
     totalTrips,
     totalDistance,
+  };
+}
+
+/**
+ * Aggregates mart_fleet_kpis rows (one per company) into fleet-wide current/previous summaries.
+ */
+export function aggregateFleetKpis(records: FleetKpiRecord[]): FleetKpiAggregate {
+  if (!records?.length) {
+    return {
+      current: { ...EMPTY_SUMMARY },
+      previous: { ...EMPTY_SUMMARY },
+      medians: { kwhPerKm: 0, regenRatio: 0, idleShare: 0, socDropPerKm: 0 },
+    };
+  }
+
+  let currNet = 0;
+  let currGross = 0;
+  let currTrips = 0;
+  let currDistance = 0;
+  let currRegenWeighted = 0;
+  let currIdleWeighted = 0;
+  let currSocWeighted = 0;
+
+  let prevNet = 0;
+  let prevGross = 0;
+  let prevTrips = 0;
+  let prevDistance = 0;
+  let prevRegenWeighted = 0;
+  let prevIdleWeighted = 0;
+  let prevSocWeighted = 0;
+
+  let medianKwhWeighted = 0;
+  let medianRegenWeighted = 0;
+  let medianIdleWeighted = 0;
+  let medianSocWeighted = 0;
+  let medianWeight = 0;
+
+  for (const r of records) {
+    currNet += r.curr_total_net_kwh;
+    currGross += r.curr_total_gross_kwh;
+    currTrips += r.curr_trip_count;
+    currDistance += r.curr_total_distance_km;
+    currRegenWeighted += r.curr_regen_pct * r.curr_total_net_kwh;
+    currIdleWeighted += r.curr_idle_pct * r.curr_total_net_kwh;
+    currSocWeighted += r.curr_soc_drop_per_km * r.curr_total_distance_km;
+
+    prevNet += r.prev_total_net_kwh;
+    prevGross += r.prev_total_gross_kwh;
+    prevTrips += r.prev_trip_count;
+    prevDistance += r.prev_total_distance_km;
+    prevRegenWeighted += r.prev_regen_pct * r.prev_total_net_kwh;
+    prevIdleWeighted += r.prev_idle_pct * r.prev_total_net_kwh;
+    prevSocWeighted += r.prev_soc_drop_per_km * r.prev_total_distance_km;
+
+    const w = r.curr_trip_count || 1;
+    medianKwhWeighted += r.curr_median_net_kwh_per_km * w;
+    medianRegenWeighted += r.curr_median_regen_pct * w;
+    medianIdleWeighted += r.curr_median_idle_pct * w;
+    medianSocWeighted += r.curr_median_soc_drop_per_km * w;
+    medianWeight += w;
+  }
+
+  return {
+    current: buildPeriodSummary(
+      currNet,
+      currGross,
+      currTrips,
+      currDistance,
+      currRegenWeighted,
+      currIdleWeighted,
+      currSocWeighted,
+    ),
+    previous: buildPeriodSummary(
+      prevNet,
+      prevGross,
+      prevTrips,
+      prevDistance,
+      prevRegenWeighted,
+      prevIdleWeighted,
+      prevSocWeighted,
+    ),
+    medians: {
+      kwhPerKm: medianWeight > 0 ? medianKwhWeighted / medianWeight : 0,
+      regenRatio: medianWeight > 0 ? medianRegenWeighted / medianWeight : 0,
+      idleShare: medianWeight > 0 ? medianIdleWeighted / medianWeight : 0,
+      socDropPerKm: medianWeight > 0 ? medianSocWeighted / medianWeight : 0,
+    },
   };
 }

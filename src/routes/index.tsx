@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { aggregateGraphQlKpis, type DailyKpiRecord } from "@/lib/graphql-adapter";
+import { aggregateFleetKpis, type DailyTrendRecord, type FleetKpiRecord } from "@/lib/graphql-adapter";
 import { GRAPHQL_API_URL } from "@/lib/graphql/config";
+import { fetchMartFleetKpis } from "@/lib/graphql/fleet-kpis";
 import { fetchDbTrips, fetchDbTripStats } from "@/lib/graphql/trips";
 import {
   Activity,
@@ -60,16 +61,24 @@ export const Route = createFileRoute("/")({
   component: DashboardPage,
 });
 
-function graphQlTrendByDay(records: DailyKpiRecord[], f: Filters) {
+function filterFleetKpiRecords(records: FleetKpiRecord[], f: Filters) {
+  return records.filter((r) => {
+    if (f.companies.length && !f.companies.includes(r.companyname)) return false;
+    const periodStart = r.current_period_start.slice(0, 10);
+    const periodEnd = r.current_period_end.slice(0, 10);
+    return periodStart <= f.to && periodEnd >= f.from;
+  });
+}
+
+function graphQlTrendByDay(records: DailyTrendRecord[], f: Filters) {
   const matched = records.filter((r) => {
     const d = r.scheduling_date.slice(0, 10);
     if (d < f.from || d > f.to) return false;
-    const companyName = r.company_name || (r as any).companyname;
-    if (f.companies.length && !f.companies.includes(companyName)) return false;
+    if (f.companies.length && !f.companies.includes(r.companyname)) return false;
     return true;
   });
 
-  const map = new Map<string, DailyKpiRecord[]>();
+  const map = new Map<string, DailyTrendRecord[]>();
   for (const r of matched) {
     const d = r.scheduling_date.slice(0, 10);
     const arr = map.get(d) ?? [];
@@ -89,14 +98,13 @@ function graphQlTrendByDay(records: DailyKpiRecord[], f: Filters) {
       let sumSocPerKmWeighted = 0;
 
       for (const r of dayRecords) {
-        totalKwh += r.total_kwh;
-        const gross = r.regen_ratio < 0.99 ? r.total_kwh / (1 - r.regen_ratio) : r.total_kwh;
-        totalGrossKwh += gross;
-        totalTrips += r.trip_count;
-        const distance = r.kwh_per_km > 0 ? r.total_kwh / r.kwh_per_km : 0;
+        totalKwh += r.total_net_kwh;
+        totalGrossKwh += r.total_gross_kwh;
+        totalTrips += r.total_trip_count;
+        const distance = r.net_kwh_per_km > 0 ? r.total_net_kwh / r.net_kwh_per_km : 0;
         totalDistance += distance;
-        sumRegenRatioWeighted += r.regen_ratio * r.total_kwh;
-        sumIdleRatioWeighted += (r.idle_ratio * 100) * r.total_kwh;
+        sumRegenRatioWeighted += r.regen_pct * r.total_net_kwh;
+        sumIdleRatioWeighted += r.idle_pct * r.total_net_kwh;
         sumSocPerKmWeighted += r.soc_per_km * distance;
       }
 
@@ -104,7 +112,7 @@ function graphQlTrendByDay(records: DailyKpiRecord[], f: Filters) {
         date,
         kwhPerKm: totalDistance > 0 ? +(totalKwh / totalDistance).toFixed(3) : 0,
         grossKwhPerKm: totalDistance > 0 ? +(totalGrossKwh / totalDistance).toFixed(3) : 0,
-        regenRatio: totalKwh > 0 ? +(sumRegenRatioWeighted / totalKwh * 100).toFixed(2) : 0,
+        regenRatio: totalKwh > 0 ? +(sumRegenRatioWeighted / totalKwh).toFixed(2) : 0,
         netKwh: +totalKwh.toFixed(1),
         grossKwh: +totalGrossKwh.toFixed(1),
         socDropPerKm: totalDistance > 0 ? +(sumSocPerKmWeighted / totalDistance).toFixed(3) : 0,
@@ -167,7 +175,12 @@ function DashboardPage() {
     }
   });
 
-  const { data: graphQlData, isLoading, error } = useQuery({
+  const { data: fleetKpiRows } = useQuery({
+    queryKey: ["mart_fleet_kpis"],
+    queryFn: fetchMartFleetKpis,
+  });
+
+  const { data: trendData, isLoading, error } = useQuery({
     queryKey: ["mart_performance_trend"],
     queryFn: async () => {
       const res = await fetch(GRAPHQL_API_URL, {
@@ -175,14 +188,18 @@ function DashboardPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: `query mart_performance_trend {
-                  sqlQuery(sql: "SELECT * FROM mart_performance_trend")
-                }`
+            sqlQuery(sql: "SELECT * FROM mart_performance_trend ORDER BY scheduling_date")
+          }`,
         }),
       });
-      if (!res.ok) throw new Error("Failed to fetch GraphQL data");
+      if (!res.ok) throw new Error("Failed to fetch GraphQL trend data");
       const json = await res.json();
-      return json;
-    }
+      const rows = json.data?.sqlQuery;
+      if (rows && !Array.isArray(rows)) {
+        throw new Error(rows.error || "GraphQL trend query error");
+      }
+      return (rows || []) as DailyTrendRecord[];
+    },
   });
 
   const { data: dbTrips } = useQuery({
@@ -202,64 +219,52 @@ function DashboardPage() {
   const filteredTrips = useMemo(() => applyFilters(allTrips, filters), [allTrips, filters]);
   const prevTrips = useMemo(() => applyFilters(allTrips, previousPeriod(filters)), [allTrips, filters]);
 
-  const summary = useMemo(() => {
-    if (graphQlData?.data?.sqlQuery) {
-      const filteredRecords = (graphQlData.data.sqlQuery as DailyKpiRecord[]).filter((r) => {
-        const d = r.scheduling_date.slice(0, 10);
-        if (d < filters.from || d > filters.to) return false;
-        const companyName = r.company_name || (r as any).companyname;
-        if (filters.companies.length && !filters.companies.includes(companyName)) return false;
-        return true;
-      });
-      return aggregateGraphQlKpis(filteredRecords);
+  const fleetKpiAggregate = useMemo(() => {
+    if (fleetKpiRows?.length) {
+      return aggregateFleetKpis(filterFleetKpiRecords(fleetKpiRows, filters));
     }
-    return summarize(filteredTrips);
-  }, [graphQlData, filteredTrips, filters]);
+    return null;
+  }, [fleetKpiRows, filters]);
 
-  const prevSummary = useMemo(() => {
-    if (graphQlData?.data?.sqlQuery) {
-      const prevFilters = previousPeriod(filters);
-      const filteredRecords = (graphQlData.data.sqlQuery as DailyKpiRecord[]).filter((r) => {
-        const d = r.scheduling_date.slice(0, 10);
-        if (d < prevFilters.from || d > prevFilters.to) return false;
-        const companyName = r.company_name || (r as any).companyname;
-        if (filters.companies.length && !filters.companies.includes(companyName)) return false;
-        return true;
-      });
-      return aggregateGraphQlKpis(filteredRecords);
-    }
-    return summarize(prevTrips);
-  }, [graphQlData, prevTrips, filters]);
+  const summary = fleetKpiAggregate?.current ?? summarize(filteredTrips);
+  const prevSummary = fleetKpiAggregate?.previous ?? summarize(prevTrips);
 
   const trend = useMemo(() => {
-    if (graphQlData?.data?.sqlQuery) {
-      return graphQlTrendByDay(graphQlData.data.sqlQuery, filters);
+    if (trendData?.length) {
+      return graphQlTrendByDay(trendData, filters);
     }
     return trendByDay(filteredTrips);
-  }, [graphQlData, filteredTrips, filters]);
+  }, [trendData, filteredTrips, filters]);
 
   const prevTrend = useMemo(() => {
-    if (graphQlData?.data?.sqlQuery) {
-      return graphQlTrendByDay(graphQlData.data.sqlQuery, previousPeriod(filters));
+    if (trendData?.length) {
+      return graphQlTrendByDay(trendData, previousPeriod(filters));
     }
     return trendByDay(prevTrips);
-  }, [graphQlData, prevTrips, filters]);
+  }, [trendData, prevTrips, filters]);
 
   const rowsByDim = (dim: PivotDim) => pivot(filteredTrips, dim);
   const driverMedians = useMemo(
     () => computePivotMedians(rowsByDim("driver_name")),
     [filteredTrips],
   );
-  const tripMedians = useMemo(
-    () => ({
+  const tripMedians = useMemo(() => {
+    if (fleetKpiAggregate) {
+      return {
+        kwhPerKm: fleetKpiAggregate.medians.kwhPerKm,
+        regenRatio: fleetKpiAggregate.medians.regenRatio,
+        socDropPerKm: fleetKpiAggregate.medians.socDropPerKm,
+        idleShare: fleetKpiAggregate.medians.idleShare,
+      };
+    }
+    return {
       kwhPerKm: median(filteredTrips.map((t) => t.kwh_per_km)),
       regenRatio:
         median(filteredTrips.map((t) => t.regen_kwh / Math.max(t.gross_discharge_kwh, 0.01))) * 100,
       socDropPerKm: median(filteredTrips.map((t) => t.soc_drop_per_km)),
       idleShare: median(filteredTrips.map((t) => t.idle_energy_share_pct)),
-    }),
-    [filteredTrips],
-  );
+    };
+  }, [fleetKpiAggregate, filteredTrips]);
 
   function delta(curr: number, prev: number) {
     if (!prev) return 0;
@@ -307,7 +312,7 @@ function DashboardPage() {
         <SectionHeader
           label="Overview"
           title="Key performance indicators"
-          description="Trip-level aggregates vs. the previous period of equal length."
+          description="Fleet-wide aggregates from mart_fleet_kpis vs. the mart's previous comparison window."
           icon={LayoutGrid}
         />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
@@ -396,7 +401,7 @@ function DashboardPage() {
         />
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
           <div className="xl:col-span-2">
-            <MetricTrendChart data={trend} prevData={prevTrend} isGraphQl={!!graphQlData?.data?.sqlQuery} error={error} />
+            <MetricTrendChart data={trend} prevData={prevTrend} isGraphQl={!!trendData?.length} error={error} />
           </div>
           <RouteEfficiencyChart trips={filteredTrips} filters={filters} />
         </div>
