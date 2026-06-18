@@ -98,14 +98,13 @@ function graphQlTrendByDay(records: DailyTrendRecord[], f: Filters) {
       let sumSocPerKmWeighted = 0;
 
       for (const r of dayRecords) {
-        totalKwh += r.total_kwh;
-        const gross = r.regen_ratio < 0.99 ? r.total_kwh / (1 - r.regen_ratio) : r.total_kwh;
-        totalGrossKwh += gross;
-        totalTrips += r.trip_count;
-        const distance = r.kwh_per_km > 0 ? r.total_kwh / r.kwh_per_km : 0;
+        totalKwh += r.total_net_kwh;
+        totalGrossKwh += r.total_gross_kwh;
+        totalTrips += r.total_trip_count;
+        const distance = r.net_kwh_per_km > 0 ? r.total_net_kwh / r.net_kwh_per_km : 0;
         totalDistance += distance;
-        sumRegenRatioWeighted += r.regen_ratio * r.total_kwh;
-        sumIdleRatioWeighted += (r.idle_ratio * 100) * r.total_kwh;
+        sumRegenRatioWeighted += r.regen_pct * r.total_net_kwh;
+        sumIdleRatioWeighted += r.idle_pct * r.total_net_kwh;
         sumSocPerKmWeighted += r.soc_per_km * distance;
       }
 
@@ -113,7 +112,7 @@ function graphQlTrendByDay(records: DailyTrendRecord[], f: Filters) {
         date,
         kwhPerKm: totalDistance > 0 ? +(totalKwh / totalDistance).toFixed(3) : 0,
         grossKwhPerKm: totalDistance > 0 ? +(totalGrossKwh / totalDistance).toFixed(3) : 0,
-        regenRatio: totalKwh > 0 ? +(sumRegenRatioWeighted / totalKwh * 100).toFixed(2) : 0,
+        regenRatio: totalKwh > 0 ? +(sumRegenRatioWeighted / totalKwh).toFixed(2) : 0,
         netKwh: +totalKwh.toFixed(1),
         grossKwh: +totalGrossKwh.toFixed(1),
         socDropPerKm: totalDistance > 0 ? +(sumSocPerKmWeighted / totalDistance).toFixed(3) : 0,

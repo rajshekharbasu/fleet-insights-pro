@@ -43,12 +43,15 @@ export interface DailyTrendRecord {
   companyid: number;
   companyname: string;
   scheduling_date: string;
-  kwh_per_km: number;
-  regen_ratio: number;
-  idle_ratio: number;
+  gross_kwh_per_km: number;
+  net_kwh_per_km: number;
+  regen_pct: number;
+  total_net_kwh: number;
+  total_gross_kwh: number;
+  bms_trip_count: number;
+  idle_pct: number;
   soc_per_km: number;
-  total_kwh: number;
-  trip_count: number;
+  total_trip_count: number;
   snapshot_date: string;
 }
 
