@@ -81,6 +81,7 @@ function graphQlTrendByDay(records: DailyKpiRecord[], f: Filters) {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, dayRecords]) => {
       let totalKwh = 0;
+      let totalGrossKwh = 0;
       let totalTrips = 0;
       let totalDistance = 0;
       let sumRegenRatioWeighted = 0;
@@ -89,6 +90,8 @@ function graphQlTrendByDay(records: DailyKpiRecord[], f: Filters) {
 
       for (const r of dayRecords) {
         totalKwh += r.total_kwh;
+        const gross = r.regen_ratio < 0.99 ? r.total_kwh / (1 - r.regen_ratio) : r.total_kwh;
+        totalGrossKwh += gross;
         totalTrips += r.trip_count;
         const distance = r.kwh_per_km > 0 ? r.total_kwh / r.kwh_per_km : 0;
         totalDistance += distance;
@@ -100,8 +103,10 @@ function graphQlTrendByDay(records: DailyKpiRecord[], f: Filters) {
       return {
         date,
         kwhPerKm: totalDistance > 0 ? +(totalKwh / totalDistance).toFixed(3) : 0,
+        grossKwhPerKm: totalDistance > 0 ? +(totalGrossKwh / totalDistance).toFixed(3) : 0,
         regenRatio: totalKwh > 0 ? +(sumRegenRatioWeighted / totalKwh * 100).toFixed(2) : 0,
         netKwh: +totalKwh.toFixed(1),
+        grossKwh: +totalGrossKwh.toFixed(1),
         socDropPerKm: totalDistance > 0 ? +(sumSocPerKmWeighted / totalDistance).toFixed(3) : 0,
         idleShare: totalKwh > 0 ? +(sumIdleRatioWeighted / totalKwh).toFixed(2) : 0,
         trips: totalTrips,
@@ -329,6 +334,14 @@ function DashboardPage() {
             }}
           />
           <KpiCard
+            label="Gross kWh / km"
+            value={fmt(summary.grossKwhPerKm, 2)}
+            delta={delta(summary.grossKwhPerKm, prevSummary.grossKwhPerKm)}
+            positiveIsGood={false}
+            icon={Gauge}
+            spark={spark("grossKwhPerKm")}
+          />
+          <KpiCard
             label="Regen Ratio"
             value={fmt(summary.regenRatio * 100, 1)}
             unit="%"
@@ -370,16 +383,6 @@ function DashboardPage() {
               lowerIsBetter: true,
               numericValue: tripMedians.idleShare,
             }}
-          />
-          <KpiCard
-            label="Anomaly Rate"
-            value={fmt(summary.anomalyRatePct, 1)}
-            unit="%"
-            delta={delta(summary.anomalyRatePct, prevSummary.anomalyRatePct || 0.001)}
-            positiveIsGood={false}
-            icon={AlertTriangle}
-            spark={spark("trips")}
-            accent="destructive"
           />
         </div>
       </section>
