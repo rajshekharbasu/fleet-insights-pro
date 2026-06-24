@@ -4,14 +4,19 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useNavigate,
+  useRouterState,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
+import { Loader2 } from "lucide-react";
 
 import appCss from "../styles.css?url";
 import { ThemeProvider } from "@/hooks/use-theme";
 import { CommandPaletteProvider } from "@/components/layout/CommandPalette";
 import { Toaster } from "@/components/ui/sonner";
+import { getCurrentUser } from "@/lib/auth";
 
 function NotFoundComponent() {
   return (
@@ -121,6 +126,50 @@ function RootShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Routes reachable without an authenticated session. Everything else is gated
+ * behind <AuthGate /> and redirects to /login.
+ */
+const PUBLIC_PATHS = new Set(["/login", "/auth/callback"]);
+
+function AuthGateLoader() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background">
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    </div>
+  );
+}
+
+/**
+ * Client-side session guard. Auth state lives in localStorage (see lib/auth),
+ * which is unavailable during SSR, so protected routes render a loader until the
+ * browser confirms a signed-in user. Unauthenticated visitors are sent to
+ * /login; public routes always render.
+ */
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const navigate = useNavigate();
+  const isPublic = PUBLIC_PATHS.has(pathname);
+  const [allowed, setAllowed] = useState(false);
+
+  useEffect(() => {
+    if (isPublic) {
+      setAllowed(true);
+      return;
+    }
+    if (!getCurrentUser()) {
+      setAllowed(false);
+      void navigate({ to: "/login" });
+      return;
+    }
+    setAllowed(true);
+  }, [pathname, isPublic, navigate]);
+
+  if (isPublic) return <>{children}</>;
+  if (!allowed) return <AuthGateLoader />;
+  return <>{children}</>;
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
@@ -128,7 +177,9 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <CommandPaletteProvider>
-          <Outlet />
+          <AuthGate>
+            <Outlet />
+          </AuthGate>
           <Toaster position="bottom-right" richColors />
         </CommandPaletteProvider>
       </ThemeProvider>

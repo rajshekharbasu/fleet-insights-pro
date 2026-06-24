@@ -1,9 +1,10 @@
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Bolt,
   ChevronDown,
   Command,
   Download,
+  LogOut,
   Menu,
   Moon,
   Search,
@@ -22,6 +23,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useTheme } from "@/hooks/use-theme";
 import { cn } from "@/lib/utils";
+import { canAccessDataSync, clearCurrentUser, getCurrentUser, type AuthUser } from "@/lib/auth";
 
 type NavLink = { to: string; label: string };
 
@@ -40,8 +42,10 @@ const NAV_CHARGING: NavLink[] = [
 ];
 
 const NAV_OTHER: NavLink[] = [
+  { to: "/launcher", label: "App Launcher" },
   { to: "/mis", label: "Daily reports" },
   { to: "/readiness", label: "Site Readiness" },
+  { to: "/data-sync", label: "Data Sync" },
 ];
 
 function isActive(path: string, to: string) {
@@ -116,12 +120,30 @@ function MobileNavGroup({ title, items, path }: { title: string; items: NavLink[
 
 export function AppNav() {
   const { dark, toggle } = useTheme();
+  const navigate = useNavigate();
   const path = useRouterState({ select: (s) => s.location.pathname });
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Start permissive so SSR and first client render match, then refine on mount.
+  const [canDataSync, setCanDataSync] = useState(true);
+  const [user, setUser] = useState<AuthUser | null>(null);
 
   useEffect(() => {
     setMobileOpen(false);
   }, [path]);
+
+  useEffect(() => {
+    const current = getCurrentUser();
+    setUser(current);
+    setCanDataSync(canAccessDataSync(current));
+  }, [path]);
+
+  const navOther = canDataSync ? NAV_OTHER : NAV_OTHER.filter((n) => n.to !== "/data-sync");
+
+  const handleSignOut = () => {
+    clearCurrentUser();
+    setUser(null);
+    void navigate({ to: "/login" });
+  };
 
   const openCommand = () => window.dispatchEvent(new CustomEvent("voltline:open-command"));
 
@@ -186,7 +208,7 @@ export function AppNav() {
 
           <NavDropdown label="Charging" items={NAV_CHARGING} path={path} />
 
-          {NAV_OTHER.map((n) => (
+          {navOther.map((n) => (
             <Link
               key={n.to}
               to={n.to}
@@ -233,6 +255,47 @@ export function AppNav() {
           <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl" onClick={toggle} aria-label="Toggle theme">
             {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
+
+          {user ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-9 items-center gap-2 rounded-xl border border-border/60 bg-card/50 pl-1 pr-2 text-[12px] font-medium transition-colors hover:border-primary/30 hover:bg-card/80"
+                  aria-label="Account menu"
+                >
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/12 text-[11px] font-semibold uppercase text-primary ring-1 ring-primary/25">
+                    {user.email.slice(0, 2)}
+                  </span>
+                  <span className="hidden max-w-[160px] truncate text-foreground md:inline">{user.email}</span>
+                  <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-60">
+                <DropdownMenuLabel className="flex flex-col gap-0.5">
+                  <span className="text-[10px] font-normal uppercase tracking-wider text-muted-foreground">
+                    Signed in as
+                  </span>
+                  <span className="truncate text-[13px] font-medium">{user.email}</span>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={handleSignOut}
+                  className="cursor-pointer text-destructive focus:text-destructive"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <Link
+              to="/login"
+              className="inline-flex h-9 items-center rounded-xl border border-border/60 bg-card/50 px-3 text-[12px] font-medium text-foreground transition-colors hover:border-primary/30 hover:bg-card/80"
+            >
+              Sign in
+            </Link>
+          )}
         </div>
       </div>
 
@@ -241,7 +304,7 @@ export function AppNav() {
           <MobileNavGroup title="Operations" items={NAV_OPERATIONS} path={path} />
           <MobileNavGroup title="Fleet" items={NAV_FLEET} path={path} />
           <MobileNavGroup title="Charging" items={NAV_CHARGING} path={path} />
-          <MobileNavGroup title="More" items={NAV_OTHER} path={path} />
+          <MobileNavGroup title="More" items={navOther} path={path} />
           <button
             type="button"
             onClick={openCommand}

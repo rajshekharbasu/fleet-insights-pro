@@ -31,7 +31,7 @@ import { RouteComparePanel } from "@/components/maps/RouteComparePanel";
 import type { HotspotKind } from "@/lib/geo-data";
 import { KIND_LABEL } from "@/lib/geo-data";
 import { ROUTES, SEGMENTS, type RouteContext } from "@/lib/fleet-data";
-import { fetchRouteLeaderboard, aggregateRouteLeaderboard, fetchRouteComparison, type RouteLeaderboardRow, type RouteComparisonRow } from "@/lib/graphql/routes";
+import { fetchRouteLeaderboard, aggregateRouteLeaderboard, fetchRouteComparison, routeDifficultyLabel, type RouteLeaderboardRow, type RouteComparisonRow } from "@/lib/graphql/routes";
 import { CHART_ENTER } from "@/lib/chart-motion";
 
 const LIVE_ROUTE_ANCHORS = [
@@ -151,10 +151,11 @@ function LeaderboardRouteCard({
   onSelect: () => void;
 }) {
   const slotColor = slot === "A" ? "#2dd4bf" : slot === "B" ? "#c084fc" : undefined;
+  const contextLabel = routeDifficultyLabel(r.peak_difficulty_score);
   const contextTone =
-    r.peak_context_label === "hard"
+    contextLabel === "hard"
       ? "text-destructive"
-      : r.peak_context_label === "medium"
+      : contextLabel === "medium"
         ? "text-warning"
         : "text-success";
 
@@ -200,7 +201,7 @@ function LeaderboardRouteCard({
       <div className="mt-3 flex items-baseline gap-2">
         <span className="num text-[22px] font-semibold tracking-tight">{fmt(r.peak_difficulty_score)}</span>
         <span className="text-[11px] text-muted-foreground">/ 100</span>
-        <span className={`ml-1 text-[11px] font-medium capitalize ${contextTone}`}>{r.peak_context_label}</span>
+        <span className={`ml-1 text-[11px] font-medium capitalize ${contextTone}`}>{contextLabel}</span>
         <span className={`ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] num ${
           r.peak_delta_pct > 5 ? "bg-destructive/10 text-destructive" : "bg-muted/40 text-muted-foreground"
         }`}>

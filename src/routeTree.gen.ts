@@ -13,14 +13,18 @@ import { Route as SegmentsRouteImport } from './routes/segments'
 import { Route as RoutesRouteImport } from './routes/routes'
 import { Route as ReadinessRouteImport } from './routes/readiness'
 import { Route as MisRouteImport } from './routes/mis'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as LauncherRouteImport } from './routes/launcher'
 import { Route as IntelligenceRouteImport } from './routes/intelligence'
 import { Route as FleetRouteImport } from './routes/fleet'
 import { Route as DriversRouteImport } from './routes/drivers'
+import { Route as DataSyncRouteImport } from './routes/data-sync'
 import { Route as ChargingRouteImport } from './routes/charging'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ReadinessIndexRouteImport } from './routes/readiness.index'
 import { Route as ReadinessOpsRouteImport } from './routes/readiness.ops'
 import { Route as ReadinessConfigRouteImport } from './routes/readiness.config'
+import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 
 const SegmentsRoute = SegmentsRouteImport.update({
   id: '/segments',
@@ -42,6 +46,16 @@ const MisRoute = MisRouteImport.update({
   path: '/mis',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LauncherRoute = LauncherRouteImport.update({
+  id: '/launcher',
+  path: '/launcher',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IntelligenceRoute = IntelligenceRouteImport.update({
   id: '/intelligence',
   path: '/intelligence',
@@ -55,6 +69,11 @@ const FleetRoute = FleetRouteImport.update({
 const DriversRoute = DriversRouteImport.update({
   id: '/drivers',
   path: '/drivers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DataSyncRoute = DataSyncRouteImport.update({
+  id: '/data-sync',
+  path: '/data-sync',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ChargingRoute = ChargingRouteImport.update({
@@ -82,17 +101,26 @@ const ReadinessConfigRoute = ReadinessConfigRouteImport.update({
   path: '/config',
   getParentRoute: () => ReadinessRoute,
 } as any)
+const AuthCallbackRoute = AuthCallbackRouteImport.update({
+  id: '/auth/callback',
+  path: '/auth/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/charging': typeof ChargingRoute
+  '/data-sync': typeof DataSyncRoute
   '/drivers': typeof DriversRoute
   '/fleet': typeof FleetRoute
   '/intelligence': typeof IntelligenceRoute
+  '/launcher': typeof LauncherRoute
+  '/login': typeof LoginRoute
   '/mis': typeof MisRoute
   '/readiness': typeof ReadinessRouteWithChildren
   '/routes': typeof RoutesRoute
   '/segments': typeof SegmentsRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/readiness/config': typeof ReadinessConfigRoute
   '/readiness/ops': typeof ReadinessOpsRoute
   '/readiness/': typeof ReadinessIndexRoute
@@ -100,12 +128,16 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/charging': typeof ChargingRoute
+  '/data-sync': typeof DataSyncRoute
   '/drivers': typeof DriversRoute
   '/fleet': typeof FleetRoute
   '/intelligence': typeof IntelligenceRoute
+  '/launcher': typeof LauncherRoute
+  '/login': typeof LoginRoute
   '/mis': typeof MisRoute
   '/routes': typeof RoutesRoute
   '/segments': typeof SegmentsRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/readiness/config': typeof ReadinessConfigRoute
   '/readiness/ops': typeof ReadinessOpsRoute
   '/readiness': typeof ReadinessIndexRoute
@@ -114,13 +146,17 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/charging': typeof ChargingRoute
+  '/data-sync': typeof DataSyncRoute
   '/drivers': typeof DriversRoute
   '/fleet': typeof FleetRoute
   '/intelligence': typeof IntelligenceRoute
+  '/launcher': typeof LauncherRoute
+  '/login': typeof LoginRoute
   '/mis': typeof MisRoute
   '/readiness': typeof ReadinessRouteWithChildren
   '/routes': typeof RoutesRoute
   '/segments': typeof SegmentsRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/readiness/config': typeof ReadinessConfigRoute
   '/readiness/ops': typeof ReadinessOpsRoute
   '/readiness/': typeof ReadinessIndexRoute
@@ -130,13 +166,17 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/charging'
+    | '/data-sync'
     | '/drivers'
     | '/fleet'
     | '/intelligence'
+    | '/launcher'
+    | '/login'
     | '/mis'
     | '/readiness'
     | '/routes'
     | '/segments'
+    | '/auth/callback'
     | '/readiness/config'
     | '/readiness/ops'
     | '/readiness/'
@@ -144,12 +184,16 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/charging'
+    | '/data-sync'
     | '/drivers'
     | '/fleet'
     | '/intelligence'
+    | '/launcher'
+    | '/login'
     | '/mis'
     | '/routes'
     | '/segments'
+    | '/auth/callback'
     | '/readiness/config'
     | '/readiness/ops'
     | '/readiness'
@@ -157,13 +201,17 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/charging'
+    | '/data-sync'
     | '/drivers'
     | '/fleet'
     | '/intelligence'
+    | '/launcher'
+    | '/login'
     | '/mis'
     | '/readiness'
     | '/routes'
     | '/segments'
+    | '/auth/callback'
     | '/readiness/config'
     | '/readiness/ops'
     | '/readiness/'
@@ -172,13 +220,17 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ChargingRoute: typeof ChargingRoute
+  DataSyncRoute: typeof DataSyncRoute
   DriversRoute: typeof DriversRoute
   FleetRoute: typeof FleetRoute
   IntelligenceRoute: typeof IntelligenceRoute
+  LauncherRoute: typeof LauncherRoute
+  LoginRoute: typeof LoginRoute
   MisRoute: typeof MisRoute
   ReadinessRoute: typeof ReadinessRouteWithChildren
   RoutesRoute: typeof RoutesRoute
   SegmentsRoute: typeof SegmentsRoute
+  AuthCallbackRoute: typeof AuthCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -211,6 +263,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MisRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/launcher': {
+      id: '/launcher'
+      path: '/launcher'
+      fullPath: '/launcher'
+      preLoaderRoute: typeof LauncherRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/intelligence': {
       id: '/intelligence'
       path: '/intelligence'
@@ -230,6 +296,13 @@ declare module '@tanstack/react-router' {
       path: '/drivers'
       fullPath: '/drivers'
       preLoaderRoute: typeof DriversRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/data-sync': {
+      id: '/data-sync'
+      path: '/data-sync'
+      fullPath: '/data-sync'
+      preLoaderRoute: typeof DataSyncRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/charging': {
@@ -267,6 +340,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReadinessConfigRouteImport
       parentRoute: typeof ReadinessRoute
     }
+    '/auth/callback': {
+      id: '/auth/callback'
+      path: '/auth/callback'
+      fullPath: '/auth/callback'
+      preLoaderRoute: typeof AuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -289,13 +369,17 @@ const ReadinessRouteWithChildren = ReadinessRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ChargingRoute: ChargingRoute,
+  DataSyncRoute: DataSyncRoute,
   DriversRoute: DriversRoute,
   FleetRoute: FleetRoute,
   IntelligenceRoute: IntelligenceRoute,
+  LauncherRoute: LauncherRoute,
+  LoginRoute: LoginRoute,
   MisRoute: MisRoute,
   ReadinessRoute: ReadinessRouteWithChildren,
   RoutesRoute: RoutesRoute,
   SegmentsRoute: SegmentsRoute,
+  AuthCallbackRoute: AuthCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

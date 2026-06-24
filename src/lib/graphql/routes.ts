@@ -23,7 +23,6 @@ export interface RouteLeaderboardRow {
   avg_altitude_gain: number;
   avg_dms_per_100km: number;
   peak_difficulty_score: number;
-  peak_context_label: string;
   peak_kwh_per_km: number;
   base_kwh_per_km: number;
   peak_delta_pct: number;
@@ -32,6 +31,19 @@ export interface RouteLeaderboardRow {
   fleet_median_kwh_per_km: number;
   difficulty_rank: number;
   snapshot_date: string;
+}
+
+export type RouteDifficultyLabel = "easy" | "medium" | "hard";
+
+/**
+ * Derives a difficulty tier from the peak difficulty score. Replaces the
+ * `peak_context_label` column that was removed from mart_route_leaderboard.
+ * Thresholds align with the high-risk cutoff used in the aggregate (>= 40).
+ */
+export function routeDifficultyLabel(peakDifficultyScore: number): RouteDifficultyLabel {
+  if (peakDifficultyScore >= 40) return "hard";
+  if (peakDifficultyScore >= 20) return "medium";
+  return "easy";
 }
 
 export interface RouteLeaderboardAggregate {
@@ -86,8 +98,8 @@ export function aggregateRouteLeaderboard(rows: RouteLeaderboardRow[]): RouteLea
     avgDmsPer100km: weight((r) => r.avg_dms_per_100km),
     avgPeakDeltaPct: weight((r) => r.peak_delta_pct),
     totalLeakageKwh: rows.reduce((s, r) => s + Math.max(0, r.energy_leakage_kwh_30d), 0),
-    highRiskRoutes: rows.filter((r) => r.peak_difficulty_score >= 40).length,
-    mediumRiskRoutes: rows.filter((r) => r.peak_context_label === "medium" || r.peak_context_label === "hard").length,
+    highRiskRoutes: rows.filter((r) => routeDifficultyLabel(r.peak_difficulty_score) === "hard").length,
+    mediumRiskRoutes: rows.filter((r) => routeDifficultyLabel(r.peak_difficulty_score) === "medium").length,
   };
 }
 
@@ -110,7 +122,6 @@ export async function fetchRouteLeaderboard(limit = 50): Promise<RouteLeaderboar
       avg_altitude_gain,
       avg_dms_per_100km,
       peak_difficulty_score,
-      peak_context_label,
       peak_kwh_per_km,
       base_kwh_per_km,
       peak_delta_pct,
@@ -119,7 +130,7 @@ export async function fetchRouteLeaderboard(limit = 50): Promise<RouteLeaderboar
       fleet_median_kwh_per_km,
       difficulty_rank,
       snapshot_date
-    FROM mart_route_leaderboard
+    FROM glue_catalog.gold_db.mart_route_leaderboard
     ORDER BY difficulty_rank ASC
     LIMIT ${limit}
   `;

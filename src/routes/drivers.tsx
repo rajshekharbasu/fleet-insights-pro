@@ -457,7 +457,6 @@ function DriverIntelligencePage() {
           <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-card/70 p-0.5">
             {(["score", "efficiency", "exposure"] as const).map((s) => (
               <button
-              +
                 key={s}
                 onClick={() => setSort(s)}
                 className={`rounded-md px-2.5 py-1 text-[11.5px] capitalize transition-colors ${
