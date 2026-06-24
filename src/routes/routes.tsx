@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Brain,
   Flame,
@@ -29,8 +30,67 @@ import { InsightCard } from "@/components/dashboard/InsightCard";
 import { RouteComparePanel } from "@/components/maps/RouteComparePanel";
 import type { HotspotKind } from "@/lib/geo-data";
 import { KIND_LABEL } from "@/lib/geo-data";
-import { ROUTES, SEGMENTS } from "@/lib/fleet-data";
+import { ROUTES, SEGMENTS, type RouteContext } from "@/lib/fleet-data";
+import { fetchRouteLeaderboard, aggregateRouteLeaderboard, fetchRouteComparison, type RouteLeaderboardRow, type RouteComparisonRow } from "@/lib/graphql/routes";
 import { CHART_ENTER } from "@/lib/chart-motion";
+
+const LIVE_ROUTE_ANCHORS = [
+  { x: 0.14, y: 0.84 }, { x: 0.26, y: 0.7 }, { x: 0.4, y: 0.55 }, { x: 0.55, y: 0.4 },
+  { x: 0.72, y: 0.52 }, { x: 0.86, y: 0.68 }, { x: 0.74, y: 0.82 }, { x: 0.52, y: 0.88 },
+  { x: 0.32, y: 0.38 }, { x: 0.18, y: 0.52 },
+];
+
+const clampUnit = (v: number) => Math.max(0.06, Math.min(0.94, v));
+
+/** Deterministic, representative SVG corridor for a live route (mart carries no geometry). */
+function liveRoutePath(seed: number) {
+  let s = (Math.abs(seed) * 2654435761) % 2147483647 || 1;
+  const rand = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  const anchor = LIVE_ROUTE_ANCHORS[Math.abs(seed) % LIVE_ROUTE_ANCHORS.length];
+  let x = clampUnit(anchor.x + (rand() - 0.5) * 0.05);
+  let y = clampUnit(anchor.y + (rand() - 0.5) * 0.05);
+  const pts = [{ x, y }];
+  const segs = 8 + Math.floor(rand() * 8);
+  for (let i = 0; i < segs; i++) {
+    const step = 0.03 + rand() * 0.02;
+    const angle = rand() * Math.PI * 2;
+    x = clampUnit(x + Math.cos(angle) * step);
+    y = clampUnit(y + Math.sin(angle) * step * 0.75);
+    pts.push({ x, y });
+  }
+  return pts;
+}
+
+/** Bridges a mart_route_comparison row into the RouteContext shape the map panel renders. */
+function routeContextFromComparison(row: RouteComparisonRow): RouteContext {
+  const path = liveRoutePath(row.route_id);
+  let len = 0;
+  for (let i = 1; i < path.length; i++) {
+    len += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+  }
+  return {
+    route_id: String(row.route_id),
+    route_code: `R-${row.route_code}`,
+    route_name: row.route_name.replace(/\s+to\s+/gi, " → "),
+    active_trips_30d: row.total_trips,
+    avg_distance_km: +(len * 90).toFixed(1),
+    avg_speed_kmh: +row.avg_speed_geo.toFixed(1),
+    altitude_gain_m: Math.round(row.avg_altitude_gain),
+    stop_density_per_km: 0,
+    rough_road_density: 0,
+    congestion_score: +row.avg_congestion_score.toFixed(1),
+    difficulty_score: +row.peak_difficulty_score.toFixed(1),
+    efficiency_kwh_per_km: +row.avg_kwh_per_km.toFixed(3),
+    peak_efficiency: +row.p75_kwh_per_km.toFixed(3),
+    offpeak_efficiency: +row.p25_kwh_per_km.toFixed(3),
+    peak_stop_ratio: 0,
+    offpeak_stop_ratio: 0,
+    peak_dms_index: +row.avg_dms_per_100km.toFixed(2),
+    offpeak_dms_index: +row.avg_dms_per_100km.toFixed(2),
+    energy_leakage_kwh: +row.energy_leakage_kwh_30d.toFixed(1),
+    path,
+  };
+}
 
 export const Route = createFileRoute("/routes")({
   head: () => ({
@@ -47,8 +107,8 @@ export const Route = createFileRoute("/routes")({
 const fmt = (n: number, d = 1) =>
   n.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
 
-function MiniStat({ label, value, unit, hint, tone = "default" }: {
-  label: string; value: string; unit?: string; hint?: string;
+function MiniStat({ label, value, unit, hint, name, tone = "default" }: {
+  label: string; value: string; unit?: string; hint?: string; name?: string;
   tone?: "default" | "warning" | "success" | "destructive";
 }) {
   const toneClass =
@@ -63,7 +123,8 @@ function MiniStat({ label, value, unit, hint, tone = "default" }: {
         <span className={`num text-[26px] font-semibold tracking-tight ${toneClass}`}>{value}</span>
         {unit && <span className="text-[12px] font-medium text-muted-foreground">{unit}</span>}
       </div>
-      {hint && <div className="mt-1 text-[11.5px] text-muted-foreground">{hint}</div>}
+      {name && <div className="mt-1 line-clamp-1 text-[11.5px] font-medium text-foreground" title={name}>{name}</div>}
+      {hint && <div className="mt-0.5 text-[11.5px] text-muted-foreground">{hint}</div>}
     </div>
   );
 }
@@ -77,6 +138,83 @@ function DifficultyBar({ value }: { value: number }) {
         style={{ width: `${Math.min(100, value)}%`, background: `linear-gradient(90deg, ${tone}, color-mix(in oklab, ${tone} 50%, transparent))` }}
       />
     </div>
+  );
+}
+
+function LeaderboardRouteCard({
+  r,
+  slot,
+  onSelect,
+}: {
+  r: RouteLeaderboardRow;
+  slot: "A" | "B" | null;
+  onSelect: () => void;
+}) {
+  const slotColor = slot === "A" ? "#2dd4bf" : slot === "B" ? "#c084fc" : undefined;
+  const contextTone =
+    r.peak_context_label === "hard"
+      ? "text-destructive"
+      : r.peak_context_label === "medium"
+        ? "text-warning"
+        : "text-success";
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`group relative overflow-hidden rounded-2xl border bg-card p-4 text-left shadow-elevated transition-all hover:-translate-y-0.5 ${
+        slot
+          ? "border-primary/50 ring-2"
+          : "border-border/60 hover:border-primary/40"
+      }`}
+      style={
+        slot && slotColor
+          ? { boxShadow: `0 0 0 1px color-mix(in oklab, ${slotColor} 40%, transparent), 0 12px 32px -12px color-mix(in oklab, ${slotColor} 25%, transparent)` }
+          : undefined
+      }
+    >
+      {slot && (
+        <div
+          className="absolute right-3 top-3 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-background"
+          style={{ background: slotColor }}
+        >
+          {slot}
+        </div>
+      )}
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="num text-[12px] font-medium text-primary">R-{r.route_code}</span>
+            <span className="text-[11px] text-muted-foreground">·</span>
+            <span className="text-[12px] text-muted-foreground">{r.trip_count.toLocaleString()} trips</span>
+            <span className="rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] num text-muted-foreground">
+              #{r.difficulty_rank}
+            </span>
+          </div>
+          <div className="mt-0.5 line-clamp-2 text-[13.5px] font-semibold tracking-tight">{r.route_name}</div>
+          <div className="mt-0.5 text-[11px] text-muted-foreground">
+            {r.company_name} · {r.dominant_vehicle_size}
+          </div>
+        </div>
+      </div>
+      <div className="mt-3 flex items-baseline gap-2">
+        <span className="num text-[22px] font-semibold tracking-tight">{fmt(r.peak_difficulty_score)}</span>
+        <span className="text-[11px] text-muted-foreground">/ 100</span>
+        <span className={`ml-1 text-[11px] font-medium capitalize ${contextTone}`}>{r.peak_context_label}</span>
+        <span className={`ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] num ${
+          r.peak_delta_pct > 5 ? "bg-destructive/10 text-destructive" : "bg-muted/40 text-muted-foreground"
+        }`}>
+          <TrendingUp className="h-3 w-3" />
+          {fmt(r.peak_delta_pct)}% peak
+        </span>
+      </div>
+      <div className="mt-2"><DifficultyBar value={r.peak_difficulty_score} /></div>
+      <div className="mt-3 grid grid-cols-3 gap-2 text-[11px] text-muted-foreground">
+        <div><div className="text-[10px] uppercase tracking-wider">kWh/km</div><div className="num text-foreground">{fmt(r.avg_kwh_per_km, 2)}</div></div>
+        <div><div className="text-[10px] uppercase tracking-wider">Stops/km</div><div className="num text-foreground">{fmt(r.avg_stops_per_km, 3)}</div></div>
+        <div><div className="text-[10px] uppercase tracking-wider">Congestion</div><div className="num text-foreground">{fmt(r.avg_congestion_score, 0)}</div></div>
+      </div>
+    </button>
   );
 }
 
@@ -149,12 +287,56 @@ function RouteIntelligencePage() {
   const [kinds, setKinds] = useState<HotspotKind[]>(["risk"]);
   const [compareIds, setCompareIds] = useState<string[]>([]);
 
-  const sorted = useMemo(() => [...ROUTES].sort((a, b) => b.difficulty_score - a.difficulty_score), []);
-  const hardest = sorted[0];
-  const easiest = sorted[sorted.length - 1];
-  const avgEff = sorted.reduce((s, r) => s + r.efficiency_kwh_per_km, 0) / sorted.length;
-  const avgCong = sorted.reduce((s, r) => s + r.congestion_score, 0) / sorted.length;
-  const avgDiff = sorted.reduce((s, r) => s + r.difficulty_score, 0) / sorted.length;
+  const { data: leaderboardRows, isLoading: leaderboardLoading, error: leaderboardError } = useQuery({
+    queryKey: ["mart_route_leaderboard"],
+    queryFn: () => fetchRouteLeaderboard(50),
+  });
+
+  const { data: comparisonRows } = useQuery({
+    queryKey: ["mart_route_comparison"],
+    queryFn: () => fetchRouteComparison(300),
+  });
+
+  const sortedLeaderboard = useMemo(
+    () => leaderboardRows ?? [],
+    [leaderboardRows],
+  );
+
+  const leaderboardAgg = useMemo(
+    () => aggregateRouteLeaderboard(sortedLeaderboard),
+    [sortedLeaderboard],
+  );
+
+  // One comparison row per route — keep the dominant vehicle size (most trips).
+  const comparisonByRouteId = useMemo(() => {
+    const map = new Map<number, RouteComparisonRow>();
+    for (const r of comparisonRows ?? []) {
+      const existing = map.get(r.route_id);
+      if (!existing || r.total_trips > existing.total_trips) map.set(r.route_id, r);
+    }
+    return map;
+  }, [comparisonRows]);
+
+  const sortedMock = useMemo(() => [...ROUTES].sort((a, b) => b.difficulty_score - a.difficulty_score), []);
+  const useGraphQlLeaderboard = sortedLeaderboard.length > 0;
+
+  const hardest = useGraphQlLeaderboard ? leaderboardAgg.hardest! : sortedMock[0];
+  const easiest = useGraphQlLeaderboard ? leaderboardAgg.easiest! : sortedMock[sortedMock.length - 1];
+
+  const avgEff = useGraphQlLeaderboard
+    ? leaderboardAgg.avgKwhPerKm
+    : sortedMock.reduce((s, r) => s + r.efficiency_kwh_per_km, 0) / sortedMock.length;
+  const avgCong = useGraphQlLeaderboard
+    ? leaderboardAgg.avgCongestion
+    : sortedMock.reduce((s, r) => s + r.congestion_score, 0) / sortedMock.length;
+  const avgDiff = useGraphQlLeaderboard
+    ? leaderboardAgg.avgDifficulty
+    : sortedMock.reduce((s, r) => s + r.difficulty_score, 0) / sortedMock.length;
+
+  function resolveCompareId(routeCode: string) {
+    const mock = ROUTES.find((r) => r.route_code === routeCode || r.route_code === `R-${routeCode}`);
+    return mock?.route_id ?? routeCode;
+  }
 
   function selectRoute(id: string) {
     setCompareIds((prev) => {
@@ -163,6 +345,14 @@ function RouteIntelligencePage() {
       if (prev.length === 1) return [prev[0], id];
       return [prev[1], id];
     });
+  }
+
+  function compareKeyForLeaderboard(row: RouteLeaderboardRow) {
+    return useGraphQlLeaderboard ? String(row.route_id) : resolveCompareId(row.route_code);
+  }
+
+  function selectLeaderboardRoute(row: RouteLeaderboardRow) {
+    selectRoute(compareKeyForLeaderboard(row));
   }
 
   function slotFor(id: string): "A" | "B" | null {
@@ -192,6 +382,44 @@ function RouteIntelligencePage() {
     peak: +(r.peak_efficiency * 100).toFixed(1),
     offpeak: +(r.offpeak_efficiency * 100).toFixed(1),
   }));
+
+  // Live comparison studio backed by mart_route_comparison.
+  const compareComparisonRows = useGraphQlLeaderboard
+    ? (compareIds
+        .map((id) => comparisonByRouteId.get(Number(id)))
+        .filter(Boolean) as RouteComparisonRow[])
+    : [];
+
+  const martCompareData = ["Efficiency", "Speed", "Congestion", "DMS", "Altitude", "Leakage"].map((dim) => {
+    const row: Record<string, string | number> = { dim };
+    for (const r of compareComparisonRows) {
+      const v =
+        dim === "Efficiency" ? r.avg_kwh_per_km * 40
+          : dim === "Speed" ? r.avg_speed_geo
+          : dim === "Congestion" ? r.avg_congestion_score
+          : dim === "DMS" ? r.avg_dms_per_100km * 100
+          : dim === "Altitude" ? r.avg_altitude_gain
+          : r.energy_leakage_kwh_30d / 50;
+      row[`R-${r.route_code}`] = +v.toFixed(1);
+    }
+    return row;
+  });
+
+  const martDistData = compareComparisonRows.map((r) => ({
+    code: `R-${r.route_code}`,
+    p25: +r.p25_kwh_per_km.toFixed(2),
+    median: +r.median_kwh_per_km.toFixed(2),
+    p75: +r.p75_kwh_per_km.toFixed(2),
+  }));
+
+  const showMartCompare = useGraphQlLeaderboard && compareComparisonRows.length >= 2;
+
+  // Synthesize RouteContexts for the map panel from live mart rows; merge with mock for the overview map.
+  const liveCompareRoutes = useMemo(
+    () => compareComparisonRows.map(routeContextFromComparison),
+    [compareComparisonRows],
+  );
+  const panelRoutes = useGraphQlLeaderboard ? [...ROUTES, ...liveCompareRoutes] : ROUTES;
 
   const ALL_KINDS: HotspotKind[] = ["risk", "harsh_braking", "overspeed", "distraction", "drowsiness", "rough_road"];
 
@@ -243,47 +471,182 @@ function RouteIntelligencePage() {
           })}
         </div>
         <RouteComparePanel
-          routes={ROUTES}
+          routes={panelRoutes}
           segments={SEGMENTS}
           compareIds={compareIds}
           kinds={kinds}
         />
       </section>
 
-      <section className="grid grid-cols-2 gap-4 lg:grid-cols-6">
-        <MiniStat label="Active routes" value={String(ROUTES.length)} hint="Mumbai MMR" />
-        <MiniStat label="Hardest" value={hardest.route_code} tone="destructive" hint={`${fmt(hardest.difficulty_score)} difficulty`} />
-        <MiniStat label="Easiest" value={easiest.route_code} tone="success" hint={`${fmt(easiest.difficulty_score)} difficulty`} />
-        <MiniStat label="Avg efficiency" value={fmt(avgEff, 2)} unit="kWh/km" hint="Fleet-wide" />
-        <MiniStat label="Avg congestion" value={fmt(avgCong)} unit="/100" hint="Time-weighted" />
-        <MiniStat label="Avg difficulty" value={fmt(avgDiff)} unit="/100" hint="Composite index" />
-      </section>
+      <section className="space-y-4">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
+          <MiniStat
+            label="Active routes"
+            value={String(useGraphQlLeaderboard ? leaderboardAgg.routeCount : ROUTES.length)}
+            hint={useGraphQlLeaderboard ? "Live mart" : "Mumbai MMR"}
+          />
+          <MiniStat
+            label="Hardest"
+            value={useGraphQlLeaderboard ? `R-${(hardest as RouteLeaderboardRow).route_code}` : (hardest as typeof ROUTES[number]).route_code}
+            tone="destructive"
+            name={hardest.route_name}
+            hint={`${fmt(useGraphQlLeaderboard ? (hardest as RouteLeaderboardRow).peak_difficulty_score : (hardest as typeof ROUTES[number]).difficulty_score)} difficulty`}
+          />
+          <MiniStat
+            label="Easiest"
+            value={useGraphQlLeaderboard ? `R-${(easiest as RouteLeaderboardRow).route_code}` : (easiest as typeof ROUTES[number]).route_code}
+            tone="success"
+            name={easiest.route_name}
+            hint={`${fmt(useGraphQlLeaderboard ? (easiest as RouteLeaderboardRow).peak_difficulty_score : (easiest as typeof ROUTES[number]).difficulty_score)} difficulty`}
+          />
+          <MiniStat label="Avg efficiency" value={fmt(avgEff, 2)} unit="kWh/km" hint="Trip-weighted" />
+          <MiniStat label="Avg congestion" value={fmt(avgCong)} unit="/100" hint="Trip-weighted" />
+          <MiniStat label="Avg difficulty" value={fmt(avgDiff)} unit="/100" hint="Trip-weighted" />
+        </div>
 
-      <section className="space-y-3">
+        {useGraphQlLeaderboard && (
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <MiniStat
+              label="Total trips"
+              value={leaderboardAgg.totalTrips.toLocaleString()}
+              hint="Across ranked routes"
+            />
+            <MiniStat
+              label="Energy leakage"
+              value={fmt(leaderboardAgg.totalLeakageKwh, 0)}
+              unit="kWh"
+              hint="30-day window"
+              tone="warning"
+            />
+            <MiniStat
+              label="High-risk routes"
+              value={String(leaderboardAgg.highRiskRoutes)}
+              hint="Difficulty ≥ 40"
+              tone="destructive"
+            />
+            <MiniStat
+              label="Avg peak delta"
+              value={fmt(leaderboardAgg.avgPeakDeltaPct, 1)}
+              unit="%"
+              hint="Peak vs base kWh/km"
+            />
+          </div>
+        )}
+
         <div className="flex items-end justify-between">
           <div>
-            <h2 className="text-[16px] font-semibold tracking-tight">Route difficulty leaderboard</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-[16px] font-semibold tracking-tight">Route difficulty leaderboard</h2>
+              {useGraphQlLeaderboard && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success ring-1 ring-inset ring-success/20">
+                  GraphQL
+                </span>
+              )}
+              {leaderboardError && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive ring-1 ring-inset ring-destructive/20">
+                  Offline fallback
+                </span>
+              )}
+            </div>
             <p className="text-[12.5px] text-muted-foreground">
-              Click a route to plot it on the map. Select a second route for side-by-side comparison.
+              Ranked by peak difficulty score from mart_route_leaderboard. Click a route to compare on the map.
             </p>
           </div>
           <div className="text-[11px] num text-muted-foreground">
-            {compareIds.length}/2 · Mumbai
+            {compareIds.length}/2 selected
           </div>
         </div>
+
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {sorted.map((r) => (
-            <RouteCard
-              key={r.route_id}
-              r={r}
-              slot={slotFor(r.route_id)}
-              onSelect={() => selectRoute(r.route_id)}
-            />
-          ))}
+          {leaderboardLoading && !useGraphQlLeaderboard
+            ? Array.from({ length: 8 }).map((_, i) => (
+                <div key={`lb-skel-${i}`} className="h-44 animate-pulse rounded-2xl border border-border/60 bg-muted/30" />
+              ))
+            : useGraphQlLeaderboard
+              ? sortedLeaderboard.map((r) => (
+                  <LeaderboardRouteCard
+                    key={`${r.company_id}-${r.route_id}`}
+                    r={r}
+                    slot={slotFor(compareKeyForLeaderboard(r))}
+                    onSelect={() => selectLeaderboardRoute(r)}
+                  />
+                ))
+              : sortedMock.map((r) => (
+                  <RouteCard
+                    key={r.route_id}
+                    r={r}
+                    slot={slotFor(r.route_id)}
+                    onSelect={() => selectRoute(r.route_id)}
+                  />
+                ))}
         </div>
       </section>
 
-      {compareRoutes.length >= 2 && (
+      {showMartCompare ? (
+        <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+          <div className="chart-enter rounded-2xl border border-border/60 bg-card p-5 shadow-elevated xl:col-span-2">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-[15px] font-semibold tracking-tight">Route comparison studio</h3>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success ring-1 ring-inset ring-success/20">
+                    GraphQL
+                  </span>
+                </div>
+                <p className="text-[12.5px] text-muted-foreground">
+                  Fingerprint for {compareComparisonRows.map((r) => `R-${r.route_code}`).join(" vs ")} · from mart_route_comparison.
+                </p>
+              </div>
+              <Brain className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <RadarChart data={martCompareData} outerRadius="78%">
+                  <PolarGrid stroke="var(--color-border)" />
+                  <PolarAngleAxis dataKey="dim" tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} />
+                  {compareComparisonRows.map((r, i) => (
+                    <Radar
+                      key={r.route_id}
+                      name={`R-${r.route_code}`}
+                      dataKey={`R-${r.route_code}`}
+                      stroke={`var(--color-chart-${(i % 5) + 1})`}
+                      fill={`var(--color-chart-${(i % 5) + 1})`}
+                      fillOpacity={0.18}
+                      {...CHART_ENTER}
+                    />
+                  ))}
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Tooltip contentStyle={{ background: "var(--color-popover)", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 12 }} />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="chart-enter rounded-2xl border border-border/60 bg-card p-5 shadow-elevated">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="text-[15px] font-semibold tracking-tight">Efficiency distribution</h3>
+                <p className="text-[12.5px] text-muted-foreground">kWh/km spread — p25, median, p75.</p>
+              </div>
+              <Flame className="h-4 w-4 text-warning" />
+            </div>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={martDistData} margin={{ top: 6, right: 6, left: -16, bottom: 0 }}>
+                  <CartesianGrid stroke="var(--color-border)" strokeDasharray="3 3" vertical={false} opacity={0.5} />
+                  <XAxis dataKey="code" tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={{ background: "var(--color-popover)", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 12 }} />
+                  <Bar dataKey="p25" name="p25" fill="var(--color-chart-2)" radius={[4, 4, 0, 0]} {...CHART_ENTER} />
+                  <Bar dataKey="median" name="Median" fill="var(--color-primary)" radius={[4, 4, 0, 0]} {...CHART_ENTER} />
+                  <Bar dataKey="p75" name="p75" fill="var(--color-chart-4)" radius={[4, 4, 0, 0]} {...CHART_ENTER} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </section>
+      ) : compareRoutes.length >= 2 ? (
         <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
           <div className="chart-enter rounded-2xl border border-border/60 bg-card p-5 shadow-elevated xl:col-span-2">
             <div className="mb-3 flex items-center justify-between">
@@ -341,40 +704,78 @@ function RouteIntelligencePage() {
             </div>
           </div>
         </section>
-      )}
+      ) : null}
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <InsightCard
-          icon={Flame}
-          tone="destructive"
-          tag={hardest.route_code}
-          title={`${hardest.route_code} shows ${fmt(((hardest.peak_efficiency - hardest.offpeak_efficiency) / hardest.offpeak_efficiency) * 100)}% higher energy loss during peak`}
-          body={`Driven by congestion (${fmt(hardest.congestion_score)}/100) on the ${hardest.route_name} corridor.`}
-        />
-        <InsightCard
-          icon={Mountain}
-          tone="warning"
-          tag={sorted[1].route_code}
-          title={`${sorted[1].route_code} contributes the most harsh braking density`}
-          body={`Altitude gain of ${sorted[1].altitude_gain_m}m on Western Express corridors — recommend descent coaching.`}
-        />
-        <InsightCard
-          icon={Snowflake}
-          tone="success"
-          tag={easiest.route_code}
-          title={`${easiest.route_code} maintains best-in-class efficiency at ${fmt(easiest.efficiency_kwh_per_km, 2)} kWh/km`}
-          body={`Low rough-road density (${fmt(easiest.rough_road_density * 100, 0)}%) — benchmark for new drivers in Mumbai.`}
-        />
-        <InsightCard
-          icon={Zap}
-          tone="primary"
-          title="Energy leakage concentrates on 3 routes"
-          body={`${sorted.slice(0, 3).map((r) => r.route_code).join(", ")} account for ${fmt(
-            (sorted.slice(0, 3).reduce((s, r) => s + r.energy_leakage_kwh, 0) /
-              sorted.reduce((s, r) => s + r.energy_leakage_kwh, 0)) * 100,
-            0,
-          )}% of total estimated leakage.`}
-        />
+        {useGraphQlLeaderboard ? (
+          <>
+            <InsightCard
+              icon={Flame}
+              tone="destructive"
+              tag={`R-${(hardest as RouteLeaderboardRow).route_code}`}
+              title={`R-${(hardest as RouteLeaderboardRow).route_code} peaks ${fmt((hardest as RouteLeaderboardRow).peak_delta_pct)}% above base kWh/km`}
+              body={`${(hardest as RouteLeaderboardRow).peak_time_bucket} peak on ${(hardest as RouteLeaderboardRow).route_name} — congestion ${fmt((hardest as RouteLeaderboardRow).avg_congestion_score, 0)}/100.`}
+            />
+            <InsightCard
+              icon={Mountain}
+              tone="warning"
+              tag={`R-${sortedLeaderboard[1]?.route_code ?? "—"}`}
+              title={`${sortedLeaderboard[1]?.route_name ?? "Second-ranked route"} in difficulty exposure`}
+              body={`Altitude gain ${fmt(sortedLeaderboard[1]?.avg_altitude_gain ?? 0, 1)}m · DMS ${fmt(sortedLeaderboard[1]?.avg_dms_per_100km ?? 0, 2)}/100km — review descent coaching.`}
+            />
+            <InsightCard
+              icon={Snowflake}
+              tone="success"
+              tag={`R-${(easiest as RouteLeaderboardRow).route_code}`}
+              title={`R-${(easiest as RouteLeaderboardRow).route_code} lowest difficulty at ${fmt((easiest as RouteLeaderboardRow).peak_difficulty_score)} / 100`}
+              body={`Efficiency ${fmt((easiest as RouteLeaderboardRow).avg_kwh_per_km, 2)} kWh/km vs fleet median ${fmt((easiest as RouteLeaderboardRow).fleet_median_kwh_per_km, 2)}.`}
+            />
+            <InsightCard
+              icon={Zap}
+              tone="primary"
+              title="Energy leakage concentrates on top routes"
+              body={`${[...sortedLeaderboard].sort((a, b) => b.energy_leakage_kwh_30d - a.energy_leakage_kwh_30d).slice(0, 3).map((r) => `R-${r.route_code}`).join(", ")} account for ${fmt(
+                ([...sortedLeaderboard].sort((a, b) => b.energy_leakage_kwh_30d - a.energy_leakage_kwh_30d).slice(0, 3).reduce((s, r) => s + r.energy_leakage_kwh_30d, 0) /
+                  sortedLeaderboard.reduce((s, r) => s + Math.max(0, r.energy_leakage_kwh_30d), 0)) * 100,
+                0,
+              )}% of positive 30d leakage.`}
+            />
+          </>
+        ) : (
+          <>
+            <InsightCard
+              icon={Flame}
+              tone="destructive"
+              tag={(hardest as typeof ROUTES[number]).route_code}
+              title={`${(hardest as typeof ROUTES[number]).route_code} shows ${fmt((((hardest as typeof ROUTES[number]).peak_efficiency - (hardest as typeof ROUTES[number]).offpeak_efficiency) / (hardest as typeof ROUTES[number]).offpeak_efficiency) * 100)}% higher energy loss during peak`}
+              body={`Driven by congestion (${fmt((hardest as typeof ROUTES[number]).congestion_score)}/100) on the ${(hardest as typeof ROUTES[number]).route_name} corridor.`}
+            />
+            <InsightCard
+              icon={Mountain}
+              tone="warning"
+              tag={sortedMock[1].route_code}
+              title={`${sortedMock[1].route_code} contributes the most harsh braking density`}
+              body={`Altitude gain of ${sortedMock[1].altitude_gain_m}m on Western Express corridors — recommend descent coaching.`}
+            />
+            <InsightCard
+              icon={Snowflake}
+              tone="success"
+              tag={(easiest as typeof ROUTES[number]).route_code}
+              title={`${(easiest as typeof ROUTES[number]).route_code} maintains best-in-class efficiency at ${fmt((easiest as typeof ROUTES[number]).efficiency_kwh_per_km, 2)} kWh/km`}
+              body={`Low rough-road density (${fmt((easiest as typeof ROUTES[number]).rough_road_density * 100, 0)}%) — benchmark for new drivers in Mumbai.`}
+            />
+            <InsightCard
+              icon={Zap}
+              tone="primary"
+              title="Energy leakage concentrates on 3 routes"
+              body={`${sortedMock.slice(0, 3).map((r) => r.route_code).join(", ")} account for ${fmt(
+                (sortedMock.slice(0, 3).reduce((s, r) => s + r.energy_leakage_kwh, 0) /
+                  sortedMock.reduce((s, r) => s + r.energy_leakage_kwh, 0)) * 100,
+                0,
+              )}% of total estimated leakage.`}
+            />
+          </>
+        )}
         <InsightCard
           icon={Sparkles}
           tag="Coaching"

@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
   AlertTriangle, Brain, Layers, Activity, Sparkles, ShieldAlert, TrendingDown, TrendingUp, X,
@@ -11,6 +12,7 @@ import { InsightCard } from "@/components/dashboard/InsightCard";
 import { FleetMapLoader } from "@/components/maps/FleetMapLoader";
 import { KIND_LABEL, type HotspotKind } from "@/lib/geo-data";
 import { ROUTES, SEGMENTS, type SegmentRisk } from "@/lib/fleet-data";
+import { buildCorrelationMatrix, fetchMartSegmentCorrelation } from "@/lib/graphql/segments";
 
 export const Route = createFileRoute("/segments")({
   head: () => ({
@@ -54,13 +56,13 @@ function Sparkline({ data, color = "var(--color-primary)" }: { data: { v: number
   );
 }
 
-function CorrelationMatrix({ segments }: { segments: SegmentRisk[] }) {
+function computeSegmentCorrelationMatrix(segments: SegmentRisk[]) {
   const fields = ["harsh_braking", "overspeed", "distraction", "drowsiness", "rough_road", "energy_leakage_kwh"] as const;
   const labels = ["Braking", "Overspeed", "Distraction", "Drowsy", "Rough", "Leakage"];
   const matrix = fields.map((a) =>
     fields.map((b) => {
-      const xs = segments.map((s) => (s as any)[a] as number);
-      const ys = segments.map((s) => (s as any)[b] as number);
+      const xs = segments.map((s) => s[a]);
+      const ys = segments.map((s) => s[b]);
       const mx = xs.reduce((s, v) => s + v, 0) / xs.length;
       const my = ys.reduce((s, v) => s + v, 0) / ys.length;
       let num = 0, dx = 0, dy = 0;
@@ -73,48 +75,90 @@ function CorrelationMatrix({ segments }: { segments: SegmentRisk[] }) {
       return +corr.toFixed(2);
     }),
   );
+  return { labels, matrix };
+}
+
+function CorrelationMatrix({
+  segments,
+  correlationRow,
+  isLoading,
+}: {
+  segments: SegmentRisk[];
+  correlationRow?: Awaited<ReturnType<typeof fetchMartSegmentCorrelation>>;
+  isLoading?: boolean;
+}) {
+  const useLiveData = !!correlationRow;
+  const { labels, matrix } = useMemo(
+    () => (correlationRow ? buildCorrelationMatrix(correlationRow) : computeSegmentCorrelationMatrix(segments)),
+    [segments, correlationRow],
+  );
+
   return (
     <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-elevated">
       <div className="mb-3">
         <h3 className="text-[15px] font-semibold tracking-tight">Risk correlation matrix</h3>
-        <p className="text-[12.5px] text-muted-foreground">Pearson correlation between event classes across segments.</p>
+        <p className="text-[12.5px] text-muted-foreground">
+          {useLiveData
+            ? `Pearson correlation from mart_segment_correlation across ${correlationRow?.route_bucket_count ?? 0} route buckets.`
+            : "Pearson correlation between event classes across segments."}
+        </p>
+        {useLiveData && correlationRow?.note && (
+          <p className="mt-1 text-[11px] text-muted-foreground/80">{correlationRow.note}</p>
+        )}
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full border-separate" style={{ borderSpacing: 3 }}>
-          <thead>
-            <tr>
-              <th />
-              {labels.map((l) => (
-                <th key={l} className="text-[10.5px] font-normal uppercase tracking-wider text-muted-foreground">{l}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {matrix.map((row, i) => (
-              <tr key={i}>
-                <td className="pr-2 text-[10.5px] uppercase tracking-wider text-muted-foreground">{labels[i]}</td>
-                {row.map((v, j) => {
-                  const t = Math.abs(v);
-                  const positive = v >= 0;
-                  const bg = positive
-                    ? `color-mix(in oklab, var(--color-primary) ${Math.round(t * 75)}%, transparent)`
-                    : `color-mix(in oklab, var(--color-destructive) ${Math.round(t * 75)}%, transparent)`;
-                  return (
-                    <td
-                      key={j}
-                      className="h-12 w-12 rounded-lg text-center text-[11px] num text-foreground transition-transform hover:scale-105"
-                      style={{ background: bg }}
-                      title={`${labels[i]} ↔ ${labels[j]}: ${v}`}
-                    >
-                      {v.toFixed(2)}
-                    </td>
-                  );
-                })}
+      {isLoading ? (
+        <div className="flex h-48 items-center justify-center text-[12.5px] text-muted-foreground">
+          Loading correlation data…
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full border-separate" style={{ borderSpacing: 3 }}>
+            <thead>
+              <tr>
+                <th />
+                {labels.map((l) => (
+                  <th key={l} className="text-[10.5px] font-normal uppercase tracking-wider text-muted-foreground">{l}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {matrix.map((row, i) => (
+                <tr key={i}>
+                  <td className="pr-2 text-[10.5px] uppercase tracking-wider text-muted-foreground">{labels[i]}</td>
+                  {row.map((v, j) => {
+                    if (v === null) {
+                      return (
+                        <td
+                          key={j}
+                          className="h-12 w-12 rounded-lg bg-muted/20 text-center text-[11px] text-muted-foreground"
+                          title={`${labels[i]} ↔ ${labels[j]}: no data`}
+                        >
+                          —
+                        </td>
+                      );
+                    }
+                    const t = Math.abs(v);
+                    const positive = v >= 0;
+                    const bg = positive
+                      ? `color-mix(in oklab, var(--color-primary) ${Math.round(t * 75)}%, transparent)`
+                      : `color-mix(in oklab, var(--color-destructive) ${Math.round(t * 75)}%, transparent)`;
+                    return (
+                      <td
+                        key={j}
+                        className="h-12 w-12 rounded-lg text-center text-[11px] num text-foreground transition-transform hover:scale-105"
+                        style={{ background: bg }}
+                        title={`${labels[i]} ↔ ${labels[j]}: ${v}`}
+                      >
+                        {v.toFixed(2)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -123,6 +167,11 @@ function SegmentRiskPage() {
   const [active, setActive] = useState<HotspotKind[]>(["risk"]);
   const [hover, setHover] = useState<SegmentRisk | null>(null);
   const [selected, setSelected] = useState<SegmentRisk | null>(null);
+
+  const { data: correlationRow, isLoading: correlationLoading } = useQuery({
+    queryKey: ["mart_segment_correlation"],
+    queryFn: () => fetchMartSegmentCorrelation(),
+  });
 
   const top = useMemo(() => [...SEGMENTS].sort((a, b) => b.risk_score - a.risk_score).slice(0, 10), []);
   const worsening = useMemo(() => [...SEGMENTS].sort((a, b) => b.trend_30d - a.trend_30d).slice(0, 6), []);
@@ -272,7 +321,11 @@ function SegmentRiskPage() {
       {/* E. Correlation matrix + insights */}
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <div className="xl:col-span-2">
-          <CorrelationMatrix segments={SEGMENTS} />
+          <CorrelationMatrix
+            segments={SEGMENTS}
+            correlationRow={correlationRow}
+            isLoading={correlationLoading}
+          />
         </div>
         <div className="space-y-3">
           <InsightCard

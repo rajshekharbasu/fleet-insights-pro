@@ -51,6 +51,7 @@
     "date-fns": "^4.1.0",
     "echarts": "^6.1.0",
     "embla-carousel-react": "^8.6.0",
+    "exceljs": "^4.4.0",
     "framer-motion": "^12.39.0",
     "input-otp": "^1.4.2",
     "leaflet": "^1.9.4",
