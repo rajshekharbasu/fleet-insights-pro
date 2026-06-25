@@ -39,6 +39,13 @@ export function normToLngLat(x: number, y: number): LngLat {
   return [lng, lat];
 }
 
+/** Inverse of {@link normToLngLat} — maps real lng/lat into the map's normalized space. */
+export function lngLatToNorm(lng: number, lat: number): { x: number; y: number } {
+  const x = (lng - GEO_BBOX.minLng) / (GEO_BBOX.maxLng - GEO_BBOX.minLng);
+  const y = (GEO_BBOX.maxLat - lat) / (GEO_BBOX.maxLat - GEO_BBOX.minLat);
+  return { x, y };
+}
+
 export interface RouteLineProperties {
   route_id: string;
   route_code: string;

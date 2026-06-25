@@ -23,6 +23,9 @@ dist-ssr
 .wrangler/
 .dev.vars
 
+# Design handoff bundle (not part of the app build)
+Fleet Insights Pro/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

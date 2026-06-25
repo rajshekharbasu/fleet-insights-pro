@@ -362,6 +362,30 @@ export function FleetMap({
           );
         })}
 
+        {showEndpoints && focusRoute?.stops?.map((stop, i) => (
+          <CircleMarker
+            key={`stop-${focusRoute.route_id}-${stop.stage_id}-${i}`}
+            center={[stop.lat, stop.lon]}
+            radius={4.5}
+            pathOptions={{
+              color: "#fff",
+              fillColor: accentColor ?? "var(--color-primary)",
+              fillOpacity: 0.9,
+              weight: 1.5,
+            }}
+          >
+            <Popup>
+              <div className="min-w-[150px] space-y-0.5 text-[12px]">
+                <div className="font-semibold">Stage {stop.stage_id}</div>
+                <div className="num text-muted-foreground">
+                  {stop.lat.toFixed(5)}, {stop.lon.toFixed(5)}
+                </div>
+                <div className="text-muted-foreground">Stop {i + 1} of {focusRoute.stops!.length}</div>
+              </div>
+            </Popup>
+          </CircleMarker>
+        ))}
+
         {endpoints && (
           <>
             <CircleMarker

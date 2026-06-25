@@ -22,6 +22,14 @@ interface VehicleOption {
   name: string;
 }
 
+interface ShowControls {
+  date?: boolean;
+  company?: boolean;
+  driver?: boolean;
+  route?: boolean;
+  vehicle?: boolean;
+}
+
 interface Props {
   filters: Filters;
   onChange: (next: Filters) => void;
@@ -31,7 +39,20 @@ interface Props {
     routes: RouteOption[];
     vehicles: VehicleOption[];
   };
+  /**
+   * Which controls to render. Defaults to all. Pages backed by snapshot data
+   * (e.g. route/driver leaderboards) pass only the dimensions they support.
+   */
+  show?: ShowControls;
 }
+
+const ALL_SHOWN: Required<ShowControls> = {
+  date: true,
+  company: true,
+  driver: true,
+  route: true,
+  vehicle: true,
+};
 
 const PRESETS: { label: string; days: number }[] = [
   { label: "7d", days: 7 },
@@ -95,7 +116,8 @@ function MultiSelect<T extends string>({
   );
 }
 
-export function FilterBar({ filters, onChange, options }: Props) {
+export function FilterBar({ filters, onChange, options, show }: Props) {
+  const shown = { ...ALL_SHOWN, ...(show ?? {}) };
   const activePreset = useMemo(() => {
     const span = daysBetween(filters.from, filters.to);
     return PRESETS.find((p) => Math.abs(span - p.days) <= 1)?.days;
@@ -135,13 +157,13 @@ export function FilterBar({ filters, onChange, options }: Props) {
 
   const chips = useMemo(() => {
     const items: { label: string; clear: () => void }[] = [];
-    filters.companies.forEach((v) => items.push({ label: v, clear: () => toggle("companies", v) }));
-    filters.drivers.forEach((v) => items.push({ label: v, clear: () => toggle("drivers", v) }));
-    filters.routes.forEach((v) => items.push({ label: routeMap.get(v) || v, clear: () => toggle("routes", v) }));
-    filters.vehicles.forEach((v) => items.push({ label: vehicleMap.get(v) || v, clear: () => toggle("vehicles", v) }));
+    if (shown.company) filters.companies.forEach((v) => items.push({ label: v, clear: () => toggle("companies", v) }));
+    if (shown.driver) filters.drivers.forEach((v) => items.push({ label: v, clear: () => toggle("drivers", v) }));
+    if (shown.route) filters.routes.forEach((v) => items.push({ label: routeMap.get(v) || v, clear: () => toggle("routes", v) }));
+    if (shown.vehicle) filters.vehicles.forEach((v) => items.push({ label: vehicleMap.get(v) || v, clear: () => toggle("vehicles", v) }));
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters, routeMap, vehicleMap]);
+  }, [filters, routeMap, vehicleMap, shown.company, shown.driver, shown.route, shown.vehicle]);
 
   function toggle<K extends "companies" | "drivers" | "routes" | "vehicles">(key: K, v: string) {
     const cur = filters[key];
@@ -160,59 +182,69 @@ export function FilterBar({ filters, onChange, options }: Props) {
   return (
     <div className="rounded-2xl border border-border/50 bg-card/60 p-3.5 shadow-elevated backdrop-blur-md">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-1 rounded-xl border border-border/50 bg-card/70 p-1">
-          <CalendarIcon className="ml-2 h-3.5 w-3.5 text-muted-foreground" />
-          {PRESETS.map((p) => {
-            const active = activePreset === p.days;
-            return (
-              <button
-                key={p.label}
-                type="button"
-                onClick={() => applyPreset(p.days)}
-                className={`rounded-lg px-2.5 py-1.5 text-[12px] font-medium transition-all ${
-                  active
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                }`}
-              >
-                {p.label}
-              </button>
-            );
-          })}
-          <div className="mx-1 h-4 w-px bg-border/60" />
-          <span className="px-2 text-[12px] num font-medium text-foreground">
-            {filters.from} → {filters.to}
-          </span>
-        </div>
+        {shown.date && (
+          <div className="flex items-center gap-1 rounded-xl border border-border/50 bg-card/70 p-1">
+            <CalendarIcon className="ml-2 h-3.5 w-3.5 text-muted-foreground" />
+            {PRESETS.map((p) => {
+              const active = activePreset === p.days;
+              return (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => applyPreset(p.days)}
+                  className={`rounded-lg px-2.5 py-1.5 text-[12px] font-medium transition-all ${
+                    active
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+            <div className="mx-1 h-4 w-px bg-border/60" />
+            <span className="px-2 text-[12px] num font-medium text-foreground">
+              {filters.from} → {filters.to}
+            </span>
+          </div>
+        )}
 
-        <div className="mx-1 hidden h-6 w-px bg-border/50 md:block" />
+        {shown.date && <div className="mx-1 hidden h-6 w-px bg-border/50 md:block" />}
 
-        <MultiSelect
-          label="Company"
-          values={filters.companies}
-          options={options?.companies || FILTER_OPTIONS.companies.map((c) => c.name)}
-          onToggle={(v) => toggle("companies", v)}
-        />
-        <MultiSelect
-          label="Driver"
-          values={filters.drivers}
-          options={options?.drivers || FILTER_OPTIONS.drivers}
-          onToggle={(v) => toggle("drivers", v)}
-        />
-        <MultiSelect
-          label="Route"
-          values={filters.routes}
-          options={options?.routes.map((r) => r.code) || FILTER_OPTIONS.routes.map((r) => r.code)}
-          getLabel={(code) => routeMap.get(code) || code}
-          onToggle={(v) => toggle("routes", v)}
-        />
-        <MultiSelect
-          label="Vehicle"
-          values={filters.vehicles}
-          options={options?.vehicles.map((v) => v.code) || FILTER_OPTIONS.vehicles.map((v) => v.code)}
-          getLabel={(code) => vehicleMap.get(code) || code}
-          onToggle={(v) => toggle("vehicles", v)}
-        />
+        {shown.company && (
+          <MultiSelect
+            label="Company"
+            values={filters.companies}
+            options={options?.companies || FILTER_OPTIONS.companies.map((c) => c.name)}
+            onToggle={(v) => toggle("companies", v)}
+          />
+        )}
+        {shown.driver && (
+          <MultiSelect
+            label="Driver"
+            values={filters.drivers}
+            options={options?.drivers || FILTER_OPTIONS.drivers}
+            onToggle={(v) => toggle("drivers", v)}
+          />
+        )}
+        {shown.route && (
+          <MultiSelect
+            label="Route"
+            values={filters.routes}
+            options={options?.routes.map((r) => r.code) || FILTER_OPTIONS.routes.map((r) => r.code)}
+            getLabel={(code) => routeMap.get(code) || code}
+            onToggle={(v) => toggle("routes", v)}
+          />
+        )}
+        {shown.vehicle && (
+          <MultiSelect
+            label="Vehicle"
+            values={filters.vehicles}
+            options={options?.vehicles.map((v) => v.code) || FILTER_OPTIONS.vehicles.map((v) => v.code)}
+            getLabel={(code) => vehicleMap.get(code) || code}
+            onToggle={(v) => toggle("vehicles", v)}
+          />
+        )}
 
         <div className="ml-auto flex items-center gap-2">
           <Button

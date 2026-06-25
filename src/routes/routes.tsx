@@ -27,11 +27,14 @@ import {
 } from "recharts";
 import { PageShell } from "@/components/layout/AppNav";
 import { InsightCard } from "@/components/dashboard/InsightCard";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import { RouteComparePanel } from "@/components/maps/RouteComparePanel";
 import type { HotspotKind } from "@/lib/geo-data";
-import { KIND_LABEL } from "@/lib/geo-data";
-import { ROUTES, SEGMENTS, type RouteContext } from "@/lib/fleet-data";
-import { fetchRouteLeaderboard, aggregateRouteLeaderboard, fetchRouteComparison, routeDifficultyLabel, type RouteLeaderboardRow, type RouteComparisonRow } from "@/lib/graphql/routes";
+import { KIND_LABEL, lngLatToNorm } from "@/lib/geo-data";
+import { ROUTES, SEGMENTS, type RouteContext, type RouteStop } from "@/lib/fleet-data";
+import { fetchRouteLeaderboard, aggregateRouteLeaderboard, fetchRouteComparison, fetchRouteGeometry, fetchRouteGeojson, routeDifficultyLabel, type RouteLeaderboardRow, type RouteComparisonRow, type RouteGeometryRow, type RouteGeojsonRow } from "@/lib/graphql/routes";
+import { fetchFilterOptions } from "@/lib/graphql/filter-options";
+import { DEFAULT_FILTERS, type Filters } from "@/lib/analytics";
 import { CHART_ENTER } from "@/lib/chart-motion";
 
 const LIVE_ROUTE_ANCHORS = [
@@ -61,22 +64,77 @@ function liveRoutePath(seed: number) {
   return pts;
 }
 
-/** Bridges a mart_route_comparison row into the RouteContext shape the map panel renders. */
-function routeContextFromComparison(row: RouteComparisonRow): RouteContext {
-  const path = liveRoutePath(row.route_id);
-  let len = 0;
-  for (let i = 1; i < path.length; i++) {
-    len += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+const EARTH_R_KM = 6371;
+function haversineKm(a: RouteStop, b: RouteStop) {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * EARTH_R_KM * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/**
+ * Orders raw stops into a sensible corridor via nearest-neighbour from the
+ * west-most stop (the mart array order is not the travel sequence).
+ */
+function orderStops(stops: RouteStop[]): RouteStop[] {
+  if (stops.length <= 2) return [...stops];
+  const remaining = [...stops];
+  let startIdx = 0;
+  for (let i = 1; i < remaining.length; i++) {
+    if (remaining[i].lon < remaining[startIdx].lon) startIdx = i;
   }
+  const ordered: RouteStop[] = [remaining.splice(startIdx, 1)[0]];
+  while (remaining.length) {
+    const last = ordered[ordered.length - 1];
+    let best = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const d = (remaining[i].lat - last.lat) ** 2 + (remaining[i].lon - last.lon) ** 2;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    ordered.push(remaining.splice(best, 1)[0]);
+  }
+  return ordered;
+}
+
+/** Bridges a mart_route_comparison row into the RouteContext shape the map panel renders. */
+function routeContextFromComparison(row: RouteComparisonRow, geometry?: RouteGeometryRow): RouteContext {
+  const orderedStops = geometry?.stops_raw?.length ? orderStops(geometry.stops_raw) : null;
+
+  let path: { x: number; y: number }[];
+  let distanceKm: number;
+
+  if (orderedStops && orderedStops.length >= 2) {
+    // Real geometry — project actual lat/long into the map's normalized space.
+    path = orderedStops.map((s) => lngLatToNorm(s.lon, s.lat));
+    distanceKm = 0;
+    for (let i = 1; i < orderedStops.length; i++) {
+      distanceKm += haversineKm(orderedStops[i - 1], orderedStops[i]);
+    }
+  } else {
+    // Fallback: deterministic representative corridor when geometry is missing.
+    path = liveRoutePath(row.route_id);
+    let len = 0;
+    for (let i = 1; i < path.length; i++) {
+      len += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+    }
+    distanceKm = len * 90;
+  }
+
+  const stopCount = geometry?.stop_count ?? orderedStops?.length ?? 0;
+
   return {
     route_id: String(row.route_id),
     route_code: `R-${row.route_code}`,
     route_name: row.route_name.replace(/\s+to\s+/gi, " → "),
     active_trips_30d: row.total_trips,
-    avg_distance_km: +(len * 90).toFixed(1),
+    avg_distance_km: +distanceKm.toFixed(1),
     avg_speed_kmh: +row.avg_speed_geo.toFixed(1),
     altitude_gain_m: Math.round(row.avg_altitude_gain),
-    stop_density_per_km: 0,
+    stop_density_per_km: distanceKm > 0 && stopCount ? +(stopCount / distanceKm).toFixed(2) : 0,
     rough_road_density: 0,
     congestion_score: +row.avg_congestion_score.toFixed(1),
     difficulty_score: +row.peak_difficulty_score.toFixed(1),
@@ -89,6 +147,58 @@ function routeContextFromComparison(row: RouteComparisonRow): RouteContext {
     offpeak_dms_index: +row.avg_dms_per_100km.toFixed(2),
     energy_leakage_kwh: +row.energy_leakage_kwh_30d.toFixed(1),
     path,
+    stops: orderedStops ?? undefined,
+    stop_count: stopCount || undefined,
+  };
+}
+
+/**
+ * Builds the RouteContext the map renders from a real road polyline
+ * (route_geometry_fact.route_geojson). The polyline is the source of truth for
+ * the drawn line; richer metrics are merged from mart_route_comparison when a
+ * matching row exists, otherwise we fall back to the geojson row's own metrics.
+ */
+function routeContextFromGeojson(
+  g: RouteGeojsonRow,
+  comparison?: RouteComparisonRow,
+  geometry?: RouteGeometryRow,
+): RouteContext {
+  const path = g.coordinates.map(([lng, lat]) => lngLatToNorm(lng, lat));
+
+  // Corridor length straight from the polyline (haversine over consecutive pts).
+  let distanceKm = 0;
+  for (let i = 1; i < g.coordinates.length; i++) {
+    const [lng1, lat1] = g.coordinates[i - 1];
+    const [lng2, lat2] = g.coordinates[i];
+    distanceKm += haversineKm({ lat: lat1, lon: lng1 } as RouteStop, { lat: lat2, lon: lng2 } as RouteStop);
+  }
+
+  const orderedStops = geometry?.stops_raw?.length ? orderStops(geometry.stops_raw) : null;
+  const stopCount = geometry?.stop_count ?? orderedStops?.length ?? 0;
+
+  return {
+    route_id: String(g.route_id),
+    route_code: `R-${g.route_code}`,
+    route_name: g.route_name.replace(/\s+to\s+/gi, " → "),
+    active_trips_30d: comparison?.total_trips ?? g.trip_count,
+    avg_distance_km: +distanceKm.toFixed(1),
+    avg_speed_kmh: comparison ? +comparison.avg_speed_geo.toFixed(1) : 0,
+    altitude_gain_m: comparison ? Math.round(comparison.avg_altitude_gain) : 0,
+    stop_density_per_km: distanceKm > 0 && stopCount ? +(stopCount / distanceKm).toFixed(2) : 0,
+    rough_road_density: 0,
+    congestion_score: comparison ? +comparison.avg_congestion_score.toFixed(1) : 0,
+    difficulty_score: +(comparison?.peak_difficulty_score ?? g.difficulty_score).toFixed(1),
+    efficiency_kwh_per_km: +(comparison?.avg_kwh_per_km ?? g.efficiency_kwh_per_km).toFixed(3),
+    peak_efficiency: comparison ? +comparison.p75_kwh_per_km.toFixed(3) : +g.efficiency_kwh_per_km.toFixed(3),
+    offpeak_efficiency: comparison ? +comparison.p25_kwh_per_km.toFixed(3) : +g.efficiency_kwh_per_km.toFixed(3),
+    peak_stop_ratio: 0,
+    offpeak_stop_ratio: 0,
+    peak_dms_index: +(comparison?.avg_dms_per_100km ?? g.avg_dms_per_100km).toFixed(2),
+    offpeak_dms_index: +(comparison?.avg_dms_per_100km ?? g.avg_dms_per_100km).toFixed(2),
+    energy_leakage_kwh: comparison ? +comparison.energy_leakage_kwh_30d.toFixed(1) : 0,
+    path,
+    stops: orderedStops ?? undefined,
+    stop_count: stopCount || undefined,
   };
 }
 
@@ -210,8 +320,9 @@ function LeaderboardRouteCard({
         </span>
       </div>
       <div className="mt-2"><DifficultyBar value={r.peak_difficulty_score} /></div>
-      <div className="mt-3 grid grid-cols-3 gap-2 text-[11px] text-muted-foreground">
+      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
         <div><div className="text-[10px] uppercase tracking-wider">kWh/km</div><div className="num text-foreground">{fmt(r.avg_kwh_per_km, 2)}</div></div>
+        <div><div className="text-[10px] uppercase tracking-wider">DMS /100km</div><div className="num text-foreground">{fmt(r.avg_dms_per_100km, 1)}</div></div>
         <div><div className="text-[10px] uppercase tracking-wider">Stops/km</div><div className="num text-foreground">{fmt(r.avg_stops_per_km, 3)}</div></div>
         <div><div className="text-[10px] uppercase tracking-wider">Congestion</div><div className="num text-foreground">{fmt(r.avg_congestion_score, 0)}</div></div>
       </div>
@@ -287,6 +398,12 @@ function RouteCard({
 function RouteIntelligencePage() {
   const [kinds, setKinds] = useState<HotspotKind[]>(["risk"]);
   const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+
+  const { data: filterOptions } = useQuery({
+    queryKey: ["filter_options"],
+    queryFn: fetchFilterOptions,
+  });
 
   const { data: leaderboardRows, isLoading: leaderboardLoading, error: leaderboardError } = useQuery({
     queryKey: ["mart_route_leaderboard"],
@@ -298,10 +415,27 @@ function RouteIntelligencePage() {
     queryFn: () => fetchRouteComparison(300),
   });
 
-  const sortedLeaderboard = useMemo(
-    () => leaderboardRows ?? [],
-    [leaderboardRows],
-  );
+  const { data: geometryRows } = useQuery({
+    queryKey: ["mart_route_geometry"],
+    queryFn: () => fetchRouteGeometry(500),
+  });
+
+  const { data: geojsonRows } = useQuery({
+    queryKey: ["route_geometry_fact"],
+    queryFn: () => fetchRouteGeojson(500),
+  });
+
+  // Leaderboard is a pre-aggregated snapshot, so Company/Route filtering is
+  // applied client-side over the returned rows (date-range/driver/vehicle don't
+  // map to this table).
+  const sortedLeaderboard = useMemo(() => {
+    const rows = leaderboardRows ?? [];
+    return rows.filter((r) => {
+      if (filters.companies.length && !filters.companies.includes(r.company_name)) return false;
+      if (filters.routes.length && !filters.routes.includes(r.route_code)) return false;
+      return true;
+    });
+  }, [leaderboardRows, filters.companies, filters.routes]);
 
   const leaderboardAgg = useMemo(
     () => aggregateRouteLeaderboard(sortedLeaderboard),
@@ -317,6 +451,12 @@ function RouteIntelligencePage() {
     }
     return map;
   }, [comparisonRows]);
+
+  const geometryByRouteId = useMemo(() => {
+    const map = new Map<number, RouteGeometryRow>();
+    for (const g of geometryRows ?? []) map.set(g.route_id, g);
+    return map;
+  }, [geometryRows]);
 
   const sortedMock = useMemo(() => [...ROUTES].sort((a, b) => b.difficulty_score - a.difficulty_score), []);
   const useGraphQlLeaderboard = sortedLeaderboard.length > 0;
@@ -415,12 +555,40 @@ function RouteIntelligencePage() {
 
   const showMartCompare = useGraphQlLeaderboard && compareComparisonRows.length >= 2;
 
-  // Synthesize RouteContexts for the map panel from live mart rows; merge with mock for the overview map.
+  // Build RouteContexts for the map panel from live mart rows + real geometry; merge with mock for the overview map.
   const liveCompareRoutes = useMemo(
-    () => compareComparisonRows.map(routeContextFromComparison),
-    [compareComparisonRows],
+    () => compareComparisonRows.map((r) => routeContextFromComparison(r, geometryByRouteId.get(r.route_id))),
+    [compareComparisonRows, geometryByRouteId],
   );
-  const panelRoutes = useGraphQlLeaderboard ? [...ROUTES, ...liveCompareRoutes] : ROUTES;
+
+  // Real road polylines (route_geometry_fact). These power the map layer:
+  // by default every route is plotted; the Company/Route filter narrows it.
+  const geoRoutes = useMemo(() => {
+    const rows = geojsonRows ?? [];
+    return rows
+      .filter((g) => {
+        if (filters.companies.length && !filters.companies.includes(g.company_name)) return false;
+        if (filters.routes.length && !filters.routes.includes(g.route_code)) return false;
+        return true;
+      })
+      .map((g) =>
+        routeContextFromGeojson(
+          g,
+          comparisonByRouteId.get(g.route_id),
+          geometryByRouteId.get(g.route_id),
+        ),
+      );
+  }, [geojsonRows, filters.companies, filters.routes, comparisonByRouteId, geometryByRouteId]);
+
+  const hasGeoRoutes = (geojsonRows?.length ?? 0) > 0;
+
+  // Prefer real geometry; fall back to the previous mock/comparison blend until
+  // route_geometry_fact has loaded.
+  const panelRoutes = hasGeoRoutes
+    ? geoRoutes
+    : useGraphQlLeaderboard
+      ? [...ROUTES, ...liveCompareRoutes]
+      : ROUTES;
 
   const ALL_KINDS: HotspotKind[] = ["risk", "harsh_braking", "overspeed", "distraction", "drowsiness", "rough_road"];
 
@@ -434,7 +602,9 @@ function RouteIntelligencePage() {
           <div className="text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">Mumbai · MMR</div>
           <div className="mt-0.5 flex items-center justify-end gap-1.5">
             <MapPin className="h-3.5 w-3.5 text-primary" />
-            <span className="text-[14px] font-semibold tracking-tight">{ROUTES.length} routes</span>
+            <span className="text-[14px] font-semibold tracking-tight">
+              {hasGeoRoutes ? geoRoutes.length : ROUTES.length} routes
+            </span>
           </div>
           <div className="text-[11px] num text-muted-foreground">
             {compareIds.length}/2 selected for compare
@@ -442,6 +612,13 @@ function RouteIntelligencePage() {
         </div>
       }
     >
+      <FilterBar
+        filters={filters}
+        onChange={setFilters}
+        options={filterOptions}
+        show={{ date: false, company: true, route: true, driver: false, vehicle: false }}
+      />
+
       {/* Map comparison — primary interaction */}
       <section className="space-y-3">
         <div className="flex flex-wrap items-center justify-end gap-1 rounded-xl border border-border/50 bg-card/70 p-1">
@@ -473,7 +650,7 @@ function RouteIntelligencePage() {
         </div>
         <RouteComparePanel
           routes={panelRoutes}
-          segments={SEGMENTS}
+          segments={hasGeoRoutes ? [] : SEGMENTS}
           compareIds={compareIds}
           kinds={kinds}
         />

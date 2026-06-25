@@ -336,3 +336,216 @@ export async function fetchRouteEfficiencyRanking(limit = 10, filters?: Filters)
     trip_count: item.tripCount || 0,
   }));
 }
+
+export interface RouteGeometryStop {
+  stage_id: number;
+  lat: number;
+  lon: number;
+}
+
+export interface RouteGeometryRow {
+  company_id: number;
+  company_name: string;
+  route_id: number;
+  route_name: string;
+  route_code: string;
+  centroid_lat: number;
+  centroid_lon: number;
+  bbox_south: number;
+  bbox_north: number;
+  bbox_west: number;
+  bbox_east: number;
+  stops_raw: RouteGeometryStop[];
+  stop_count: number;
+  snapshot_date: string;
+}
+
+/** Normalizes stops_raw which may arrive as a JSON array or a JSON-encoded string. */
+function parseStops(raw: unknown): RouteGeometryStop[] {
+  let arr: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      arr = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((s) => {
+      const o = s as Record<string, unknown>;
+      return {
+        stage_id: Number(o.stage_id),
+        lat: Number(o.lat),
+        lon: Number(o.lon),
+      };
+    })
+    .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lon));
+}
+
+/**
+ * Fetches per-route stop geometry (real lat/long) from mart_route_geometry.
+ */
+export async function fetchRouteGeometry(limit = 500): Promise<RouteGeometryRow[]> {
+  const sql = `
+    SELECT
+      company_id,
+      company_name,
+      route_id,
+      route_name,
+      route_code,
+      centroid_lat,
+      centroid_lon,
+      bbox_south,
+      bbox_north,
+      bbox_west,
+      bbox_east,
+      stops_raw,
+      stop_count,
+      snapshot_date
+    FROM mart_route_geometry
+    LIMIT ${limit}
+  `;
+
+  const res = await fetch(GRAPHQL_API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query: `query GetRouteGeometry($sql: String!) {
+        sqlQuery(sql: $sql)
+      }`,
+      variables: { sql },
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch route geometry: ${res.statusText}`);
+  }
+
+  const json = await res.json();
+  if (json.errors) {
+    throw new Error(json.errors[0]?.message || "GraphQL query error");
+  }
+
+  const rows = parseSqlQueryResult<Record<string, unknown>>(json.data?.sqlQuery);
+  return rows.map((r) => ({
+    company_id: Number(r.company_id),
+    company_name: String(r.company_name ?? ""),
+    route_id: Number(r.route_id),
+    route_name: String(r.route_name ?? ""),
+    route_code: String(r.route_code ?? ""),
+    centroid_lat: Number(r.centroid_lat),
+    centroid_lon: Number(r.centroid_lon),
+    bbox_south: Number(r.bbox_south),
+    bbox_north: Number(r.bbox_north),
+    bbox_west: Number(r.bbox_west),
+    bbox_east: Number(r.bbox_east),
+    stops_raw: parseStops(r.stops_raw),
+    stop_count: Number(r.stop_count),
+    snapshot_date: String(r.snapshot_date ?? ""),
+  }));
+}
+
+/** [lng, lat] coordinate as stored in route_geojson. */
+export type LngLatTuple = [number, number];
+
+export interface RouteGeojsonRow {
+  route_id: number;
+  route_code: string;
+  route_name: string;
+  company_id: number;
+  company_name: string;
+  difficulty_score: number;
+  efficiency_kwh_per_km: number;
+  avg_dms_per_100km: number;
+  trip_count: number;
+  context_label: string;
+  /** Full road polyline, ordered start → end, as [lng, lat] pairs. */
+  coordinates: LngLatTuple[];
+}
+
+/** Parses route_geojson which arrives as a JSON-encoded GeoJSON LineString (or an object). */
+function parseGeojsonCoordinates(raw: unknown): LngLatTuple[] {
+  let obj: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      obj = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  const geom = obj as { type?: string; coordinates?: unknown; geometry?: { coordinates?: unknown } } | null;
+  // Support bare LineString, or a Feature wrapping the geometry.
+  const coords = (geom?.coordinates ?? geom?.geometry?.coordinates) as unknown;
+  if (!Array.isArray(coords)) return [];
+  const out: LngLatTuple[] = [];
+  for (const c of coords) {
+    if (Array.isArray(c) && c.length >= 2) {
+      const lng = Number(c[0]);
+      const lat = Number(c[1]);
+      if (Number.isFinite(lng) && Number.isFinite(lat)) out.push([lng, lat]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Fetches the real per-route road polylines from route_geometry_fact. The
+ * `route_geojson` column is a GeoJSON LineString of [lng, lat] points; this is
+ * the source of truth for drawing route layers on the map.
+ */
+export async function fetchRouteGeojson(limit = 500): Promise<RouteGeojsonRow[]> {
+  const sql = `
+    SELECT
+      route_id,
+      route_code,
+      route_name,
+      company_id,
+      company_name,
+      route_difficulty_score,
+      median_kwh_per_km,
+      avg_dms_per_100km,
+      trip_count,
+      route_context_label,
+      route_geojson
+    FROM route_geometry_fact
+    LIMIT ${limit}
+  `;
+
+  const res = await fetch(GRAPHQL_API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query: `query GetRouteGeojson($sql: String!) {
+        sqlQuery(sql: $sql)
+      }`,
+      variables: { sql },
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch route geojson: ${res.statusText}`);
+  }
+
+  const json = await res.json();
+  if (json.errors) {
+    throw new Error(json.errors[0]?.message || "GraphQL query error");
+  }
+
+  const rows = parseSqlQueryResult<Record<string, unknown>>(json.data?.sqlQuery);
+  return rows
+    .map((r) => ({
+      route_id: Number(r.route_id),
+      route_code: String(r.route_code ?? ""),
+      route_name: String(r.route_name ?? ""),
+      company_id: Number(r.company_id),
+      company_name: String(r.company_name ?? ""),
+      difficulty_score: Number(r.route_difficulty_score) || 0,
+      efficiency_kwh_per_km: Number(r.median_kwh_per_km) || 0,
+      avg_dms_per_100km: Number(r.avg_dms_per_100km) || 0,
+      trip_count: Number(r.trip_count) || 0,
+      context_label: String(r.route_context_label ?? ""),
+      coordinates: parseGeojsonCoordinates(r.route_geojson),
+    }))
+    .filter((r) => r.coordinates.length >= 2);
+}

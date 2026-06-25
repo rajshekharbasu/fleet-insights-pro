@@ -42,6 +42,16 @@ export interface RouteContext {
   energy_leakage_kwh: number;
   // pseudo-geospatial polyline (normalized 0..1 coords for SVG canvas)
   path: { x: number; y: number }[];
+  // Real route geometry from mart_route_geometry (live routes only).
+  stops?: RouteStop[];
+  stop_count?: number;
+}
+
+/** A real stage/stop on a route, with WGS84 coordinates. */
+export interface RouteStop {
+  stage_id: number;
+  lat: number;
+  lon: number;
 }
 
 const ROUTE_SEEDS = [

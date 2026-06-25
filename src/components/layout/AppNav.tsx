@@ -32,6 +32,7 @@ const NAV_OPERATIONS: NavLink[] = [
   { to: "/routes", label: "Route Intelligence" },
   { to: "/segments", label: "Segment Risk" },
   { to: "/drivers", label: "Driver Intelligence" },
+  { to: "/battery-cycles", label: "Operational Efficiency" },
 ];
 
 const NAV_FLEET: NavLink[] = [{ to: "/fleet", label: "Fleet Command" }];

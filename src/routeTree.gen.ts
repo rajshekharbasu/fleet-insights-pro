@@ -20,6 +20,7 @@ import { Route as FleetRouteImport } from './routes/fleet'
 import { Route as DriversRouteImport } from './routes/drivers'
 import { Route as DataSyncRouteImport } from './routes/data-sync'
 import { Route as ChargingRouteImport } from './routes/charging'
+import { Route as BatteryCyclesRouteImport } from './routes/battery-cycles'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ReadinessIndexRouteImport } from './routes/readiness.index'
 import { Route as ReadinessOpsRouteImport } from './routes/readiness.ops'
@@ -81,6 +82,11 @@ const ChargingRoute = ChargingRouteImport.update({
   path: '/charging',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BatteryCyclesRoute = BatteryCyclesRouteImport.update({
+  id: '/battery-cycles',
+  path: '/battery-cycles',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -109,6 +115,7 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/battery-cycles': typeof BatteryCyclesRoute
   '/charging': typeof ChargingRoute
   '/data-sync': typeof DataSyncRoute
   '/drivers': typeof DriversRoute
@@ -127,6 +134,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/battery-cycles': typeof BatteryCyclesRoute
   '/charging': typeof ChargingRoute
   '/data-sync': typeof DataSyncRoute
   '/drivers': typeof DriversRoute
@@ -145,6 +153,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/battery-cycles': typeof BatteryCyclesRoute
   '/charging': typeof ChargingRoute
   '/data-sync': typeof DataSyncRoute
   '/drivers': typeof DriversRoute
@@ -165,6 +174,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/battery-cycles'
     | '/charging'
     | '/data-sync'
     | '/drivers'
@@ -183,6 +193,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/battery-cycles'
     | '/charging'
     | '/data-sync'
     | '/drivers'
@@ -200,6 +211,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/battery-cycles'
     | '/charging'
     | '/data-sync'
     | '/drivers'
@@ -219,6 +231,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  BatteryCyclesRoute: typeof BatteryCyclesRoute
   ChargingRoute: typeof ChargingRoute
   DataSyncRoute: typeof DataSyncRoute
   DriversRoute: typeof DriversRoute
@@ -312,6 +325,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChargingRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/battery-cycles': {
+      id: '/battery-cycles'
+      path: '/battery-cycles'
+      fullPath: '/battery-cycles'
+      preLoaderRoute: typeof BatteryCyclesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -368,6 +388,7 @@ const ReadinessRouteWithChildren = ReadinessRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  BatteryCyclesRoute: BatteryCyclesRoute,
   ChargingRoute: ChargingRoute,
   DataSyncRoute: DataSyncRoute,
   DriversRoute: DriversRoute,

@@ -45,14 +45,24 @@ function MetricCell({
   value,
   unit,
   tone = "default",
+  delta,
+  deltaTone = "default",
 }: {
   label: string;
   value: string;
   unit?: string;
   tone?: "default" | "good" | "bad";
+  delta?: string;
+  deltaTone?: "default" | "good" | "bad";
 }) {
   const toneClass =
     tone === "good" ? "text-success" : tone === "bad" ? "text-destructive" : "text-foreground";
+  const deltaClass =
+    deltaTone === "good"
+      ? "text-success"
+      : deltaTone === "bad"
+        ? "text-destructive"
+        : "text-muted-foreground";
   return (
     <div className="rounded-xl border border-border/50 bg-muted/20 px-3 py-2.5">
       <div className="text-[10px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
@@ -62,8 +72,28 @@ function MetricCell({
         <span className={`num text-[15px] font-semibold ${toneClass}`}>{value}</span>
         {unit && <span className="text-[10px] text-muted-foreground">{unit}</span>}
       </div>
+      {delta && <div className={`num mt-0.5 text-[10px] font-medium ${deltaClass}`}>{delta}</div>}
     </div>
   );
+}
+
+/**
+ * Percent difference of `value` relative to `peer` (lower DMS is better, so a
+ * negative delta is "good"). Returns null when there's no peer to compare to.
+ */
+function dmsDelta(
+  value: number,
+  peer: number | undefined,
+  peerCode: string | undefined,
+): { text: string; tone: "good" | "bad" | "default" } | undefined {
+  if (peer == null || peer <= 0) return undefined;
+  const pct = ((value - peer) / peer) * 100;
+  if (Math.abs(pct) < 0.5) return { text: `even vs ${peerCode ?? "peer"}`, tone: "default" };
+  const sign = pct > 0 ? "+" : "−";
+  return {
+    text: `${sign}${fmt(Math.abs(pct), 0)}% vs ${peerCode ?? "peer"}`,
+    tone: pct > 0 ? "bad" : "good",
+  };
 }
 
 function RouteMetricsBlock({
@@ -108,17 +138,11 @@ function RouteMetricsBlock({
           tone={winnerTone("efficiency_kwh_per_km", true)}
         />
         <MetricCell
-          label="DMS events"
-          value={String(stats.dmsTotal)}
-          tone={
-            peerStats
-              ? compareWinner(stats.dmsTotal, peerStats.dmsTotal, true) === "tie"
-                ? "default"
-                : (compareWinner(stats.dmsTotal, peerStats.dmsTotal, true) === "a") === (slot === "A")
-                  ? "good"
-                  : "bad"
-              : "default"
-          }
+          label="DMS / 100km"
+          value={fmt(route.peak_dms_index, 1)}
+          tone={winnerTone("peak_dms_index", true)}
+          delta={dmsDelta(route.peak_dms_index, peer?.peak_dms_index, peer?.route_code)?.text}
+          deltaTone={dmsDelta(route.peak_dms_index, peer?.peak_dms_index, peer?.route_code)?.tone}
         />
         <MetricCell
           label="High-risk segs"
@@ -175,7 +199,7 @@ function RouteMetricsBlock({
         className="mt-2 text-[10px] font-medium"
         style={{ color: accent.color }}
       >
-        {stats.segmentCount} segments · {fmt(stats.pathKm, 1)} km corridor
+        {route.stop_count ? `${route.stop_count} stages` : `${stats.segmentCount} segments`} · {fmt(stats.pathKm, 1)} km corridor
       </div>
     </div>
   );
@@ -262,7 +286,7 @@ function CompareRouteColumn({
         dmsMode="full"
         accentColor={accent.color}
         panelTitle={`${start} → ${end}`}
-        panelSubtitle={`${stats.dmsTotal} DMS footprints · full corridor`}
+        panelSubtitle={route.stop_count ? `${route.stop_count} stages · real geometry` : `${stats.dmsTotal} DMS footprints · full corridor`}
         fitTrigger={`${mapFitTrigger}|${route.route_id}|${slot}`}
       />
 
@@ -277,7 +301,19 @@ type CompareRow = {
   b: string;
   winner: CompareWinner;
   lowerIsBetter: boolean;
+  /** Optional % gap between A and B, rendered next to the edge winner. */
+  gap?: string;
 };
+
+/** Percent gap between two values relative to the smaller one. */
+function pctGap(a: number, b: number): string | undefined {
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  if (lo <= 0) return undefined;
+  const pct = ((hi - lo) / lo) * 100;
+  if (pct < 0.5) return undefined;
+  return `−${fmt(pct, 0)}%`;
+}
 
 function HeadToHeadBar({
   routeA,
@@ -307,11 +343,12 @@ function HeadToHeadBar({
       lowerIsBetter: true,
     },
     {
-      label: "DMS events",
-      a: String(statsA.dmsTotal),
-      b: String(statsB.dmsTotal),
-      winner: compareWinner(statsA.dmsTotal, statsB.dmsTotal, true),
+      label: "DMS / 100km",
+      a: fmt(routeA.peak_dms_index, 1),
+      b: fmt(routeB.peak_dms_index, 1),
+      winner: compareWinner(routeA.peak_dms_index, routeB.peak_dms_index, true),
       lowerIsBetter: true,
+      gap: pctGap(routeA.peak_dms_index, routeB.peak_dms_index),
     },
     {
       label: "High-risk segments",
@@ -335,6 +372,16 @@ function HeadToHeadBar({
       lowerIsBetter: false,
     },
   ];
+
+  if (routeA.stop_count != null && routeB.stop_count != null) {
+    rows.push({
+      label: "Stages",
+      a: String(routeA.stop_count),
+      b: String(routeB.stop_count),
+      winner: compareWinner(routeA.stop_count, routeB.stop_count, true),
+      lowerIsBetter: true,
+    });
+  }
 
   return (
     <div className="rounded-2xl border border-border/60 bg-card p-4 shadow-elevated">
@@ -382,9 +429,12 @@ function HeadToHeadBar({
                   {row.winner === "tie" ? (
                     <span className="text-muted-foreground">—</span>
                   ) : (
-                    <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-success">
+                    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-success">
                       <TrendingDown className="h-3 w-3" />
                       {row.winner === "a" ? routeA.route_code : routeB.route_code}
+                      {row.gap && (
+                        <span className="num text-[10px] text-muted-foreground">{row.gap}</span>
+                      )}
                     </span>
                   )}
                 </td>

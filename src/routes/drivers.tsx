@@ -12,8 +12,11 @@ import {
 } from "recharts";
 import { PageShell } from "@/components/layout/AppNav";
 import { InsightCard } from "@/components/dashboard/InsightCard";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import { DRIVERS, type DriverScore } from "@/lib/fleet-data";
 import { fetchDriverLeaderboard, type DriverLeaderboardExtras, type DriverLeaderboardEntry } from "@/lib/graphql/drivers";
+import { fetchFilterOptions } from "@/lib/graphql/filter-options";
+import { DEFAULT_FILTERS, type Filters } from "@/lib/analytics";
 import { exportDriverWorkbook } from "@/lib/export/driver-excel";
 
 export const Route = createFileRoute("/drivers")({
@@ -299,6 +302,12 @@ function DriverIntelligencePage() {
   const [sort, setSort] = useState<"score" | "efficiency" | "exposure">("score");
   const [filter, setFilter] = useState<"incentive" | "review" | "coaching" | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+
+  const { data: filterOptions } = useQuery({
+    queryKey: ["filter_options"],
+    queryFn: fetchFilterOptions,
+  });
 
   const { data: liveEntries, isLoading, error } = useQuery({
     queryKey: ["mart_driver_leaderboard"],
@@ -306,7 +315,19 @@ function DriverIntelligencePage() {
   });
 
   const usingLive = (liveEntries?.length ?? 0) > 0;
-  const drivers: DriverScore[] = usingLive ? liveEntries! : DRIVERS;
+  const allDrivers: DriverScore[] = usingLive ? liveEntries! : DRIVERS;
+
+  // The leaderboard is a snapshot, so Company/Driver filtering is applied
+  // client-side over the returned rows.
+  const drivers: DriverScore[] = useMemo(
+    () =>
+      allDrivers.filter((d) => {
+        if (filters.companies.length && !filters.companies.includes(d.company_name)) return false;
+        if (filters.drivers.length && !filters.drivers.includes(d.driver_name)) return false;
+        return true;
+      }),
+    [allDrivers, filters.companies, filters.drivers],
+  );
 
   const extrasById = useMemo(
     () => new Map((liveEntries ?? []).map((e) => [e.driver_id, e.extras])),
@@ -399,6 +420,13 @@ function DriverIntelligencePage() {
         ) : undefined
       }
     >
+      <FilterBar
+        filters={filters}
+        onChange={setFilters}
+        options={filterOptions}
+        show={{ date: false, company: true, driver: true, route: false, vehicle: false }}
+      />
+
       {/* A. Command center */}
       <section className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         {usingLive ? (
