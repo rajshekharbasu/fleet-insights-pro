@@ -30,7 +30,7 @@ import { InsightCard } from "@/components/dashboard/InsightCard";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { RouteComparePanel } from "@/components/maps/RouteComparePanel";
 import type { HotspotKind } from "@/lib/geo-data";
-import { KIND_LABEL, lngLatToNorm } from "@/lib/geo-data";
+import { lngLatToNorm } from "@/lib/geo-data";
 import { ROUTES, SEGMENTS, type RouteContext, type RouteStop } from "@/lib/fleet-data";
 import { fetchRouteLeaderboard, aggregateRouteLeaderboard, fetchRouteComparison, fetchRouteGeometry, fetchRouteGeojson, routeDifficultyLabel, type RouteLeaderboardRow, type RouteComparisonRow, type RouteGeometryRow, type RouteGeojsonRow } from "@/lib/graphql/routes";
 import { fetchFilterOptions } from "@/lib/graphql/filter-options";
@@ -396,7 +396,7 @@ function RouteCard({
 }
 
 function RouteIntelligencePage() {
-  const [kinds, setKinds] = useState<HotspotKind[]>(["risk"]);
+  const [kinds] = useState<HotspotKind[]>(["risk"]);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
 
@@ -428,14 +428,21 @@ function RouteIntelligencePage() {
   // Leaderboard is a pre-aggregated snapshot, so Company/Route filtering is
   // applied client-side over the returned rows (date-range/driver/vehicle don't
   // map to this table).
+  const search = (filters.search ?? "").trim().toLowerCase();
+
   const sortedLeaderboard = useMemo(() => {
     const rows = leaderboardRows ?? [];
     return rows.filter((r) => {
       if (filters.companies.length && !filters.companies.includes(r.company_name)) return false;
       if (filters.routes.length && !filters.routes.includes(r.route_code)) return false;
+      if (
+        search &&
+        !`${r.route_name} ${r.route_code} ${r.company_name}`.toLowerCase().includes(search)
+      )
+        return false;
       return true;
     });
-  }, [leaderboardRows, filters.companies, filters.routes]);
+  }, [leaderboardRows, filters.companies, filters.routes, search]);
 
   const leaderboardAgg = useMemo(
     () => aggregateRouteLeaderboard(sortedLeaderboard),
@@ -458,7 +465,16 @@ function RouteIntelligencePage() {
     return map;
   }, [geometryRows]);
 
-  const sortedMock = useMemo(() => [...ROUTES].sort((a, b) => b.difficulty_score - a.difficulty_score), []);
+  const sortedMock = useMemo(
+    () =>
+      [...ROUTES]
+        .filter(
+          (r) =>
+            !search || `${r.route_name} ${r.route_code}`.toLowerCase().includes(search),
+        )
+        .sort((a, b) => b.difficulty_score - a.difficulty_score),
+    [search],
+  );
   const useGraphQlLeaderboard = sortedLeaderboard.length > 0;
 
   const hardest = useGraphQlLeaderboard ? leaderboardAgg.hardest! : sortedMock[0];
@@ -569,6 +585,11 @@ function RouteIntelligencePage() {
       .filter((g) => {
         if (filters.companies.length && !filters.companies.includes(g.company_name)) return false;
         if (filters.routes.length && !filters.routes.includes(g.route_code)) return false;
+        if (
+          search &&
+          !`${g.route_name} ${g.route_code} ${g.company_name}`.toLowerCase().includes(search)
+        )
+          return false;
         return true;
       })
       .map((g) =>
@@ -578,7 +599,7 @@ function RouteIntelligencePage() {
           geometryByRouteId.get(g.route_id),
         ),
       );
-  }, [geojsonRows, filters.companies, filters.routes, comparisonByRouteId, geometryByRouteId]);
+  }, [geojsonRows, filters.companies, filters.routes, search, comparisonByRouteId, geometryByRouteId]);
 
   const hasGeoRoutes = (geojsonRows?.length ?? 0) > 0;
 
@@ -589,8 +610,6 @@ function RouteIntelligencePage() {
     : useGraphQlLeaderboard
       ? [...ROUTES, ...liveCompareRoutes]
       : ROUTES;
-
-  const ALL_KINDS: HotspotKind[] = ["risk", "harsh_braking", "overspeed", "distraction", "drowsiness", "rough_road"];
 
   return (
     <PageShell
@@ -616,38 +635,11 @@ function RouteIntelligencePage() {
         filters={filters}
         onChange={setFilters}
         options={filterOptions}
-        show={{ date: false, company: true, route: true, driver: false, vehicle: false }}
+        show={{ date: false, company: true, route: true, driver: false, vehicle: false, search: true }}
       />
 
       {/* Map comparison — primary interaction */}
       <section className="space-y-3">
-        <div className="flex flex-wrap items-center justify-end gap-1 rounded-xl border border-border/50 bg-card/70 p-1">
-          {ALL_KINDS.map((k) => {
-            const active = kinds.includes(k);
-            return (
-              <button
-                key={k}
-                type="button"
-                onClick={() =>
-                  setKinds((prev) => {
-                    if (prev.includes(k)) {
-                      const next = prev.filter((x) => x !== k);
-                      return next.length ? next : ["risk"];
-                    }
-                    return [...prev, k];
-                  })
-                }
-                className={`rounded-lg px-2.5 py-1.5 text-[11.5px] font-medium transition-all ${
-                  active
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {KIND_LABEL[k]}
-              </button>
-            );
-          })}
-        </div>
         <RouteComparePanel
           routes={panelRoutes}
           segments={hasGeoRoutes ? [] : SEGMENTS}

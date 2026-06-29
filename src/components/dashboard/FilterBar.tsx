@@ -1,4 +1,4 @@
-import { Calendar as CalendarIcon, Check, ChevronDown, RotateCcw, X } from "lucide-react";
+import { Calendar as CalendarIcon, Check, ChevronDown, RotateCcw, Search, X } from "lucide-react";
 import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,6 +28,7 @@ interface ShowControls {
   driver?: boolean;
   route?: boolean;
   vehicle?: boolean;
+  search?: boolean;
 }
 
 interface Props {
@@ -52,6 +53,8 @@ const ALL_SHOWN: Required<ShowControls> = {
   driver: true,
   route: true,
   vehicle: true,
+  // Opt-in only so existing callers are unaffected.
+  search: false,
 };
 
 const PRESETS: { label: string; days: number }[] = [
@@ -210,6 +213,29 @@ export function FilterBar({ filters, onChange, options, show }: Props) {
         )}
 
         {shown.date && <div className="mx-1 hidden h-6 w-px bg-border/50 md:block" />}
+
+        {shown.search && (
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              value={filters.search ?? ""}
+              onChange={(e) => onChange({ ...filters, search: e.target.value })}
+              placeholder="Search routes…"
+              className="h-9 w-48 rounded-xl border border-border/60 bg-card/50 pl-8 pr-7 text-[12px] text-foreground placeholder:text-muted-foreground focus:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/15"
+            />
+            {filters.search && (
+              <button
+                type="button"
+                onClick={() => onChange({ ...filters, search: "" })}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        )}
 
         {shown.company && (
           <MultiSelect

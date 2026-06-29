@@ -130,7 +130,7 @@ export async function fetchRouteLeaderboard(limit = 50): Promise<RouteLeaderboar
       fleet_median_kwh_per_km,
       difficulty_rank,
       snapshot_date
-    FROM glue_catalog.gold_db.mart_route_leaderboard
+    FROM mart_route_leaderboard
     ORDER BY difficulty_rank ASC
     LIMIT ${limit}
   `;

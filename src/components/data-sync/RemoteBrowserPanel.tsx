@@ -166,23 +166,23 @@ function SyncTableDialog({
 }: {
   database: string; table: string | null; onClose: () => void; onDone: () => void;
 }) {
-  const [isReference, setIsReference] = useState(false);
+  const [physical, setPhysical] = useState(true);
   const [targetName, setTargetName] = useState("");
 
   useEffect(() => {
-    if (table) { setIsReference(false); setTargetName(""); }
+    if (table) { setPhysical(true); setTargetName(""); }
   }, [table]);
 
   const mut = useMutation({
     mutationFn: () => syncTable({
       database,
       table: table!,
-      target_table: targetName.trim() || null,
-      is_reference: isReference,
+      target_table: targetName.trim() || table!,
+      physical,
     }),
     onSuccess: (res) => {
       const rows = res.rows_synced != null ? ` · ${res.rows_synced} rows` : "";
-      toast.success(`Synced “${res.target_table ?? table}”${isReference ? " (reference)" : ""}${rows}.`);
+      toast.success(`Synced “${res.target_table ?? table}”${physical ? "" : " (reference)"}${rows}.`);
       onClose();
       onDone();
     },
@@ -204,14 +204,14 @@ function SyncTableDialog({
         <div className="space-y-4">
           <div className="flex items-start justify-between gap-4 rounded-lg border border-border/60 p-3">
             <div>
-              <div className="text-[13px] font-medium">Reference only (zero-copy)</div>
+              <div className="text-[13px] font-medium">Physical load — materialize data locally</div>
               <p className="text-[12px] text-muted-foreground">
-                {isReference
-                  ? "Creates a live view — no data copied, always reads remote."
-                  : "Loads a full physical copy of the data locally for fast queries."}
+                {physical
+                  ? "Loads a full physical copy of the data locally for fast queries."
+                  : "Reference only — creates a live view, no data copied, always reads remote."}
               </p>
             </div>
-            <Switch checked={isReference} onCheckedChange={setIsReference} />
+            <Switch checked={physical} onCheckedChange={setPhysical} />
           </div>
 
           <div className="space-y-1.5">
@@ -224,7 +224,7 @@ function SyncTableDialog({
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button disabled={mut.isPending} onClick={() => mut.mutate()}>
-            {mut.isPending ? "Syncing…" : isReference ? "Create reference" : "Load table"}
+            {mut.isPending ? "Syncing…" : physical ? "Load table" : "Create reference"}
           </Button>
         </DialogFooter>
       </DialogContent>

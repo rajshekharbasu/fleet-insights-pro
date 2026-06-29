@@ -58,8 +58,8 @@ export const listRemoteTables = (database: string) =>
 export interface SyncTableRequest {
   database: string;
   table: string;
-  target_table?: string | null;
-  is_reference?: boolean;
+  target_table: string;
+  physical: boolean;
 }
 
 export interface SyncTableResult {
@@ -69,7 +69,7 @@ export interface SyncTableResult {
   target_table?: string;
   rows_synced?: number;
   elapsed_ms?: number;
-  is_reference?: boolean;
+  physical?: boolean;
   [key: string]: unknown;
 }
 

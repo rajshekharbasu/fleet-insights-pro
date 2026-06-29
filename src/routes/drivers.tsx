@@ -239,9 +239,13 @@ function DriverCard({ d, extras, onOpen }: {
   const dir = scoreTrendDir(extras, d.efficiency_delta_pct);
   const trendLabel = extras?.scoreTrend ? String(extras.scoreTrend) : dir > 0 ? "improving" : dir < 0 ? "declining" : "stable";
   return (
-    <div className="group relative overflow-hidden rounded-2xl border border-border/60 bg-card p-4 shadow-elevated transition-all hover:-translate-y-0.5 hover:border-primary/40">
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group relative block w-full overflow-hidden rounded-2xl border border-border/60 bg-card p-4 text-left shadow-elevated transition-all hover:-translate-y-0.5 hover:border-primary/40"
+    >
       <div className="flex items-start justify-between gap-2">
-        <button onClick={onOpen} className="flex items-center gap-2.5 text-left">
+        <div className="flex items-center gap-2.5 text-left">
           <div className="relative flex h-9 w-9 items-center justify-center rounded-full text-[11.5px] font-semibold tracking-tight"
             style={{ background: `color-mix(in oklab, ${BAND_COLOR[d.risk_band]} 18%, var(--color-card))`, color: BAND_COLOR[d.risk_band], boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${BAND_COLOR[d.risk_band]} 35%, transparent)` }}
           >
@@ -260,7 +264,7 @@ function DriverCard({ d, extras, onOpen }: {
             </div>
             <div className="text-[11px] text-muted-foreground">{d.company_name} · {d.trips_30d} trips</div>
           </div>
-        </button>
+        </div>
         <span className="rounded-md px-1.5 py-0.5 text-[10.5px] uppercase tracking-wider"
           style={{ background: `color-mix(in oklab, ${BAND_COLOR[d.risk_band]} 15%, transparent)`, color: BAND_COLOR[d.risk_band] }}>
           {d.risk_band}
@@ -293,7 +297,7 @@ function DriverCard({ d, extras, onOpen }: {
         </span>
         <span className="text-[10.5px] capitalize text-muted-foreground">{trendLabel.replace(/_/g, " ")}</span>
       </div>
-    </div>
+    </button>
   );
 }
 

@@ -163,6 +163,15 @@ export function AppNav() {
           </div>
         </Link>
 
+        <div className="hidden shrink-0 items-center gap-2.5 sm:flex">
+          <span className="h-7 w-px bg-border/60" aria-hidden />
+          <img
+            src="/favicon.png"
+            alt="Transvolt Mobility"
+            className="h-6 w-auto opacity-90"
+          />
+        </div>
+
         <nav className="hidden min-w-0 flex-1 items-center gap-0.5 overflow-x-auto lg:flex">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

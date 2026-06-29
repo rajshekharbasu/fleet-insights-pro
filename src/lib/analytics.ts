@@ -8,6 +8,8 @@ export interface Filters {
   trips: string[];
   from: string; // ISO date
   to: string;   // ISO date
+  /** Free-text search applied client-side (e.g. route name/code/company). Optional for backward compatibility. */
+  search?: string;
 }
 
 export const DEFAULT_FILTERS: Filters = {
@@ -18,6 +20,7 @@ export const DEFAULT_FILTERS: Filters = {
   trips: [],
   from: new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10),
   to: new Date().toISOString().slice(0, 10),
+  search: "",
 };
 
 export function applyFilters(trips: Trip[], f: Filters): Trip[] {
