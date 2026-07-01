@@ -95,7 +95,8 @@ export const DATA_SYNC_ALLOWLIST: string[] = [
   "jafar.k@transvolt.in",
   "kunal.s@transvolt.in",
   "sumit.k@transvolt.in",
-  
+  "saud.s@transvolt.in",
+
 ];
 
 export function getCurrentUser(): AuthUser | null {
