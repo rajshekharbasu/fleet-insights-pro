@@ -162,21 +162,19 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
   const [layout, setLayout] = useState<Layout>("spotlight");
   const [anchorIdx, setAnchorIdx] = useState(initAnchor);
   const [selKey, setSelKey] = useState<string>(initSel);
-  const [drillDepot, setDrillDepot] = useState<string>(dataset.depots[0] ?? "");
   const [sortKey, setSortKey] = useState<keyof BusRow>("healthScore");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  const [drillMonth, setDrillMonth] = useState<string>(lastMonthName);
   const [band, setBand] = useState<"ALL" | Band>("ALL");
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<Selected | null>(null);
 
-  // Keep the explorer's site in sync with the global company scope.
+  // Reset selected drawer when global company or month changes
   useEffect(() => {
-    if (company !== "ALL") setDrillDepot(company);
     setSelected(null);
-  }, [company]);
+  }, [company, selKey]);
 
   const selMonthName = dataset.mname[selKey] ?? "—";
+  const explorerMonth = selMonthName !== "—" ? selMonthName : lastMonthName;
   const wk = useMemo(() => windowKeys(dataset, anchorIdx), [dataset, anchorIdx]);
   const prev = prevDataKey(dataset, selKey);
   const curAgg = siteAgg(dataset, selKey, company);
@@ -290,7 +288,14 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
   }, [dataset, scopedDepots, wk]);
 
   const drillRows = useMemo(() => {
-    let rows = (dataset.detail[`${drillDepot}|${drillMonth}`] || []).slice();
+    const depotsToQuery = company === "ALL" ? dataset.depots : [company];
+    let rows: BusRow[] = [];
+    depotsToQuery.forEach((dep) => {
+      const r = dataset.detail[`${dep}|${explorerMonth}`] || [];
+      rows.push(...r);
+    });
+    rows = rows.slice();
+
     if (band !== "ALL") rows = rows.filter((r) => r.band === band);
     if (q) {
       const needle = q.toUpperCase();
@@ -304,9 +309,17 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
       return (((av ?? -Infinity) as number) - ((bv ?? -Infinity) as number)) * dir;
     });
     return rows;
-  }, [dataset, drillDepot, drillMonth, band, q, sortKey, sortDir]);
+  }, [dataset, company, explorerMonth, band, q, sortKey, sortDir]);
 
-  const drillAll = dataset.detail[`${drillDepot}|${drillMonth}`] || [];
+  const drillAll = useMemo(() => {
+    const depotsToQuery = company === "ALL" ? dataset.depots : [company];
+    const rows: BusRow[] = [];
+    depotsToQuery.forEach((dep) => {
+      const r = dataset.detail[`${dep}|${explorerMonth}`] || [];
+      rows.push(...r);
+    });
+    return rows;
+  }, [dataset, company, explorerMonth]);
   const drillAvgEfc = (() => {
     const v = drillRows.map((r) => r.efcGross).filter((x): x is number => x != null);
     return v.length ? (v.reduce((a, b) => a + b, 0) / v.length).toFixed(1) : "—";
@@ -613,15 +626,6 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
           </div>
 
           <div className="flex flex-wrap items-center gap-4 rounded-2xl border border-border/60 bg-muted/40 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <span className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">Site</span>
-              <select value={drillDepot} onChange={(e) => { setDrillDepot(e.target.value); setSelected(null); }} className="h-[30px] rounded-lg border border-border/60 bg-card px-2.5 text-[12px] font-semibold text-foreground outline-none">
-                {dataset.depots.map((d) => (<option key={d} value={d}>{d}</option>))}
-              </select>
-            </div>
-            <FilterGroup label="Month">
-              {dataset.dataMonths.map((m) => (<Seg key={m} active={drillMonth === m} onClick={() => { setDrillMonth(m); setSelected(null); }}>{m.slice(0, 3)}</Seg>))}
-            </FilterGroup>
             <FilterGroup label="Band">
               {BANDS.map((b) => (<Seg key={b.value} active={band === b.value} onClick={() => setBand(b.value)}><span className="h-1.5 w-1.5 rounded-sm" style={{ background: b.dot }} /> {b.label}</Seg>))}
             </FilterGroup>
@@ -641,7 +645,7 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
                       const activeCol = sortKey === c.key;
                       return (
                         <th key={String(c.key)} onClick={() => toggleSort(c.key)} className="th-sort sticky top-0 cursor-pointer whitespace-nowrap border-b border-border px-3.5 py-2.5 text-[10px] font-semibold uppercase tracking-wide" style={{ textAlign: c.align, color: activeCol ? "var(--primary)" : "var(--muted-foreground)" }}>
-                          {c.label}{activeCol ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+                           {c.label}{activeCol ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
                         </th>
                       );
                     })}
@@ -652,7 +656,7 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
                     const bc = BAND_COLOR[r.band] ?? "var(--muted-foreground)";
                     const isSel = selected?.bus.reg === r.reg;
                     return (
-                      <tr key={r.reg} onClick={() => liveDrill && pickBus(r, drillMonth)} className={cn("border-b border-border/40", r.band === "ATTENTION" && "cc-row-alert", liveDrill && "cursor-pointer hover:bg-muted/40", isSel && "bg-primary/5")}>
+                      <tr key={r.reg} onClick={() => liveDrill && pickBus(r, explorerMonth)} className={cn("border-b border-border/40", r.band === "ATTENTION" && "cc-row-alert", liveDrill && "cursor-pointer hover:bg-muted/40", isSel && "bg-primary/5")}>
                         <td className="whitespace-nowrap px-3.5 py-2.5"><div className="flex items-center gap-2.5"><span className="h-[22px] w-[3px] flex-none rounded-sm" style={{ background: bc }} /><span className="num font-semibold">{r.reg}</span></div></td>
                         <td className="whitespace-nowrap px-3.5 py-2.5 text-muted-foreground">{r.type || "—"}</td>
                         <td className="num px-3.5 py-2.5 text-right">{fmt(r.grossKwh, 0)}</td>
