@@ -46,7 +46,6 @@ export function EnergyFlowTrendChart({
       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" opacity={0.4} />
       <XAxis
         dataKey="label"
-        tick={{ fontSize: 10 }}
         interval="preserveStartEnd"
         tick={(props) => {
           const { x, y, payload } = props;
