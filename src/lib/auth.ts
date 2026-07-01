@@ -94,6 +94,8 @@ export async function fetchCurrentUserFromApi(): Promise<AuthUser | null> {
 export const DATA_SYNC_ALLOWLIST: string[] = [
   "jafar.k@transvolt.in",
   "kunal.s@transvolt.in",
+  "sumit.k@transvolt.in",
+  
 ];
 
 export function getCurrentUser(): AuthUser | null {
