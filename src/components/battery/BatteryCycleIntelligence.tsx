@@ -798,6 +798,7 @@ function BusDrillDrawer({ reg, type, monthName, reportMonth, summary, onClose }:
 
 /** Daily gross-discharge bars with an overlaid RTE% line. */
 function DailyChart({ rows }: { rows: CycleDailyRow[] }) {
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const W = 560;
   const H = 170;
   const padL = 6, padR = 6, padT = 14, padB = 18;
@@ -815,23 +816,110 @@ function DailyChart({ rows }: { rows: CycleDailyRow[] }) {
   }).filter(Boolean).join(" ");
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-border/60 bg-muted/20 p-3">
+    <div className="relative overflow-x-auto rounded-xl border border-border/60 bg-muted/20 p-3">
       <svg width={Math.max(W, n * 16)} height={H} viewBox={`0 0 ${Math.max(W, n * 16)} ${H}`} className="block">
         {[0.25, 0.5, 0.75].map((g) => (<line key={g} x1={padL} x2={W - padR} y1={padT + innerH * g} y2={padT + innerH * g} stroke="color-mix(in oklab,var(--muted-foreground) 16%,transparent)" strokeWidth={1} />))}
+        
+        {/* Hover vertical dashed guide line */}
+        {hoveredIdx !== null && (
+          <line
+            x1={padL + slot * hoveredIdx + slot / 2}
+            x2={padL + slot * hoveredIdx + slot / 2}
+            y1={padT}
+            y2={padT + innerH}
+            stroke="color-mix(in oklab,var(--primary) 35%,transparent)"
+            strokeWidth={1.5}
+            strokeDasharray="3 3"
+            pointerEvents="none"
+          />
+        )}
+
         {rows.map((r, i) => {
           const v = r.gross_discharge_kwh ?? 0;
           const h = (v / maxGross) * innerH;
           const x = padL + slot * i + (slot - barW) / 2;
           const y = padT + innerH - h;
-          return <rect key={i} x={x} y={y} width={barW} height={Math.max(1, h)} rx={2} fill="color-mix(in oklab,var(--chart-4) 78%,transparent)" />;
+          const isHovered = hoveredIdx === i;
+          return (
+            <rect
+              key={i}
+              x={x}
+              y={y}
+              width={barW}
+              height={Math.max(1, h)}
+              rx={2}
+              fill={isHovered ? "var(--chart-4)" : "color-mix(in oklab,var(--chart-4) 78%,transparent)"}
+              pointerEvents="none"
+            />
+          );
         })}
         {rtePts && <polyline points={rtePts} fill="none" stroke="var(--primary)" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />}
+
+        {/* Highlight circle on line point when hovered */}
+        {hoveredIdx !== null && rows[hoveredIdx]?.daily_rte_pct != null && (() => {
+          const r = rows[hoveredIdx];
+          const cx = padL + slot * hoveredIdx + slot / 2;
+          const cy = padT + innerH - (Math.min(100, r.daily_rte_pct) / 100) * innerH;
+          return (
+            <>
+              <circle cx={cx} cy={cy} r={6} fill="var(--card)" stroke="var(--primary)" strokeWidth={2} pointerEvents="none" />
+              <circle cx={cx} cy={cy} r={2.5} fill="var(--primary)" pointerEvents="none" />
+            </>
+          );
+        })()}
+
+        {/* Hover detection vertical zones */}
+        {rows.map((r, i) => {
+          const x = padL + slot * i;
+          return (
+            <rect
+              key={`detect-${i}`}
+              x={x}
+              y={padT}
+              width={slot}
+              height={innerH}
+              fill="transparent"
+              className="cursor-pointer"
+              onMouseEnter={() => setHoveredIdx(i)}
+              onMouseLeave={() => setHoveredIdx(null)}
+            />
+          );
+        })}
       </svg>
       <div className="mt-1 flex justify-between text-[9.5px] text-muted-foreground">
         <span>{fmtDay(rows[0]?.session_date)}</span>
         <span className="num">peak {fmt(maxGross, 0)} kWh</span>
         <span>{fmtDay(rows[n - 1]?.session_date)}</span>
       </div>
+
+      {/* Floating interactive tooltip */}
+      {hoveredIdx !== null && rows[hoveredIdx] && (() => {
+        const r = rows[hoveredIdx];
+        const leftPercent = ((padL + slot * hoveredIdx + slot / 2) / Math.max(W, n * 16)) * 100;
+        return (
+          <div
+            className="absolute z-50 rounded-xl border border-border bg-card/95 p-2.5 shadow-elevated backdrop-blur-sm transition-all pointer-events-none text-[11.5px] min-w-[125px]"
+            style={{
+              left: `${leftPercent}%`,
+              top: "16px",
+              transform: leftPercent > 70 ? "translateX(-100%)" : leftPercent < 30 ? "translateX(0)" : "translateX(-50%)",
+              marginLeft: leftPercent > 70 ? "-8px" : leftPercent < 30 ? "8px" : "0",
+            }}
+          >
+            <div className="font-semibold text-foreground mb-1">{fmtDay(r.session_date)}</div>
+            <div className="flex items-center gap-1.5 text-muted-foreground">
+              <span className="h-2 w-2 rounded-sm bg-[var(--chart-4)]" />
+              <span>Gross: <strong className="text-foreground num">{fmt(r.gross_discharge_kwh, 1)}</strong> kWh</span>
+            </div>
+            {r.daily_rte_pct != null && (
+              <div className="flex items-center gap-1.5 text-muted-foreground mt-0.5">
+                <span className="h-2 w-2 rounded-sm bg-[var(--primary)]" />
+                <span>RTE: <strong className="text-foreground num">{fmt(r.daily_rte_pct, 1)}%</strong></span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
