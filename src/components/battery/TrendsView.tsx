@@ -2,7 +2,7 @@
  * Trends — daily fleet trajectory (from cycle_daily, aggregated server-side)
  * plus the monthly KPI trend across the data window, scoped to the company.
  */
-import { useMemo } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import {
@@ -75,6 +75,7 @@ export function TrendsView({
 }
 
 function DailyTrendChart({ rows }: { rows: DailyTrendPoint[] }) {
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const H = 240;
   const pad = { l: 44, r: 14, t: 16, b: 26 };
   const n = rows.length;
@@ -95,8 +96,11 @@ function DailyTrendChart({ rows }: { rows: DailyTrendPoint[] }) {
     .filter(Boolean)
     .join(" ");
 
+  const hoveredRow = hoveredIdx !== null ? rows[hoveredIdx] : null;
+  const leftPercent = hoveredIdx !== null ? ((pad.l + slot * hoveredIdx + slot / 2) / W) * 100 : 0;
+
   return (
-    <div className="overflow-x-auto rounded-xl border border-border/60 bg-muted/20 p-3">
+    <div className="relative overflow-x-auto rounded-xl border border-border/60 bg-muted/20 p-3">
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="block">
         {[0, 0.25, 0.5, 0.75, 1].map((g) => {
           const y = pad.t + innerH * g;
@@ -107,36 +111,255 @@ function DailyTrendChart({ rows }: { rows: DailyTrendPoint[] }) {
             </g>
           );
         })}
+
+        {/* Hover guide line */}
+        {hoveredIdx !== null && (
+          <line
+            x1={pad.l + slot * hoveredIdx + slot / 2}
+            x2={pad.l + slot * hoveredIdx + slot / 2}
+            y1={pad.t}
+            y2={pad.t + innerH}
+            stroke="color-mix(in oklab,var(--primary) 35%,transparent)"
+            strokeWidth={1.5}
+            strokeDasharray="3 3"
+            pointerEvents="none"
+          />
+        )}
+
         {rows.map((r, i) => {
           const v = r.gross_kwh ?? 0;
           const h = (v / maxGross) * innerH;
           const x = pad.l + slot * i + (slot - barW) / 2;
           const y = pad.t + innerH - h;
+          const isHovered = hoveredIdx === i;
           return (
-            <rect key={i} x={x} y={y} width={barW} height={Math.max(1, h)} rx={2} fill="color-mix(in oklab,var(--chart-4) 75%,transparent)">
-              <title>{`${fmtDay(r.session_date)} · ${fmt(r.gross_kwh, 0)} kWh · ${r.buses} buses · RTE ${fmt(r.rte_pct, 1)}%`}</title>
-            </rect>
+            <rect
+              key={i}
+              x={x}
+              y={y}
+              width={barW}
+              height={Math.max(1, h)}
+              rx={2}
+              fill={isHovered ? "var(--chart-4)" : "color-mix(in oklab,var(--chart-4) 75%,transparent)"}
+              pointerEvents="none"
+            />
           );
         })}
         {rtePts && <polyline points={rtePts} fill="none" stroke="var(--primary)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />}
+
+        {/* Highlight circle on line point when hovered */}
+        {hoveredIdx !== null && hoveredRow && hoveredRow.rte_pct != null && (
+          <g pointerEvents="none">
+            <circle
+              cx={pad.l + slot * hoveredIdx + slot / 2}
+              cy={pad.t + innerH - (Math.min(100, hoveredRow.rte_pct) / 100) * innerH}
+              r={6}
+              fill="var(--card)"
+              stroke="var(--primary)"
+              strokeWidth={2}
+            />
+            <circle
+              cx={pad.l + slot * hoveredIdx + slot / 2}
+              cy={pad.t + innerH - (Math.min(100, hoveredRow.rte_pct) / 100) * innerH}
+              r={2.5}
+              fill="var(--primary)"
+            />
+          </g>
+        )}
+
+        {/* Hover detection vertical zones */}
+        {rows.map((r, i) => {
+          const x = pad.l + slot * i;
+          return (
+            <rect
+              key={`detect-${i}`}
+              x={x}
+              y={pad.t}
+              width={slot}
+              height={innerH}
+              fill="transparent"
+              className="cursor-pointer"
+              onMouseEnter={() => setHoveredIdx(i)}
+              onMouseLeave={() => setHoveredIdx(null)}
+            />
+          );
+        })}
       </svg>
       <div className="mt-1 flex justify-between text-[9.5px] text-muted-foreground">
         <span>{fmtDay(rows[0]?.session_date)}</span>
         <span className="num">peak {fmt(maxGross, 0)} kWh/day</span>
         <span>{fmtDay(rows[n - 1]?.session_date)}</span>
       </div>
+
+      {/* Floating tooltip */}
+      {hoveredIdx !== null && hoveredRow && (
+        <div
+          className="absolute z-50 rounded-xl border border-border bg-card/95 p-2.5 shadow-elevated backdrop-blur-sm transition-all pointer-events-none text-[11.5px] min-w-[130px]"
+          style={{
+            left: `${leftPercent}%`,
+            top: "20px",
+            transform: leftPercent > 75 ? "translateX(-100%)" : leftPercent < 25 ? "translateX(0)" : "translateX(-50%)",
+            marginLeft: leftPercent > 75 ? "-8px" : leftPercent < 25 ? "8px" : "0",
+          }}
+        >
+          <div className="font-semibold text-foreground mb-1">{fmtDay(hoveredRow.session_date)}</div>
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <span className="h-2 w-2 rounded-sm bg-[var(--chart-4)]" />
+            <span>Gross: <strong className="text-foreground num">{fmt(hoveredRow.gross_kwh, 0)}</strong> kWh</span>
+          </div>
+          {hoveredRow.rte_pct != null && (
+            <div className="flex items-center gap-1.5 text-muted-foreground mt-0.5">
+              <span className="h-2 w-2 rounded-sm bg-[var(--primary)]" />
+              <span>RTE: <strong className="text-foreground num">{fmt(hoveredRow.rte_pct, 1)}%</strong></span>
+            </div>
+          )}
+          <div className="text-[10px] text-muted-foreground mt-1 border-t border-border/40 pt-1">
+            Active: <span className="text-foreground num">{hoveredRow.buses}</span> buses
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function RegenStrip({ rows }: { rows: DailyTrendPoint[] }) {
-  const vals = rows.map((r) => r.regen_pct ?? null);
-  const valid = vals.filter((v): v is number => v != null);
-  const avg = valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : 0;
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+  const n = rows.length;
+  const W = 900;
+  const H = 70;
+  const padL = 6, padR = 6, padT = 8, padB = 8;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  const valid = rows.filter((r) => r.regen_pct != null);
+  const avg = valid.length ? valid.reduce((a, b) => a + (b.regen_pct ?? 0), 0) / valid.length : 0;
+
+  const maxVal = Math.max(1, ...rows.map((r) => r.regen_pct ?? 0));
+  const minVal = Math.min(...rows.map((r) => r.regen_pct ?? 0));
+  const range = maxVal - minVal || 1;
+
+  const slot = innerW / Math.max(1, n);
+
+  // Generate points for line and area
+  const pts = rows.map((r, i) => {
+    if (r.regen_pct == null) return null;
+    const x = padL + slot * i + slot / 2;
+    const y = padT + innerH - ((r.regen_pct - minVal) / range) * innerH;
+    return { x, y, val: r.regen_pct, r };
+  });
+
+  const validPts = pts.filter((p): p is NonNullable<typeof p> => p !== null);
+  const linePoints = validPts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const areaPoints = validPts.length
+    ? `${validPts[0].x.toFixed(1)},${(H - padB).toFixed(1)} ` +
+      linePoints +
+      ` ${validPts[validPts.length - 1].x.toFixed(1)},${(H - padB).toFixed(1)}`
+    : "";
+
+  const hoveredPt = hoveredIdx !== null ? pts[hoveredIdx] : null;
+  const leftPercent = hoveredIdx !== null ? ((padL + slot * hoveredIdx + slot / 2) / W) * 100 : 0;
+
   return (
-    <Panel title="Daily energy regeneration" subtitle={`avg ${fmt(avg, 1)}% across ${rows.length} days`}>
-      <div className="h-20 w-full">
-        <Sparkline vals={vals} color="var(--chart-2)" w={900} h={70} />
+    <Panel title="Daily energy regeneration" subtitle={`avg ${fmt(avg, 1)}% across ${n} days`}>
+      <div className="relative overflow-x-auto rounded-xl border border-border/60 bg-muted/20 p-3">
+        <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="block">
+          {/* Background area under line */}
+          {areaPoints && (
+            <polygon
+              points={areaPoints}
+              fill="var(--chart-2)"
+              fillOpacity={0.11}
+              pointerEvents="none"
+            />
+          )}
+
+          {/* Dotted grid lines */}
+          {[0.25, 0.5, 0.75].map((g) => (
+            <line
+              key={g}
+              x1={padL}
+              x2={W - padR}
+              y1={padT + innerH * g}
+              y2={padT + innerH * g}
+              stroke="color-mix(in oklab,var(--muted-foreground) 11%,transparent)"
+              strokeWidth={1}
+              strokeDasharray="2 2"
+              pointerEvents="none"
+            />
+          ))}
+
+          {/* Main trend line */}
+          {linePoints && (
+            <polyline
+              points={linePoints}
+              fill="none"
+              stroke="var(--chart-2)"
+              strokeWidth={1.8}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              pointerEvents="none"
+            />
+          )}
+
+          {/* Hover cursor guide line */}
+          {hoveredIdx !== null && hoveredPt && (
+            <line
+              x1={hoveredPt.x}
+              x2={hoveredPt.x}
+              y1={padT}
+              y2={H - padB}
+              stroke="color-mix(in oklab,var(--chart-2) 35%,transparent)"
+              strokeWidth={1.5}
+              strokeDasharray="3 3"
+              pointerEvents="none"
+            />
+          )}
+
+          {/* Hover highlighted dot */}
+          {hoveredIdx !== null && hoveredPt && (
+            <g pointerEvents="none">
+              <circle cx={hoveredPt.x} cy={hoveredPt.y} r={5.5} fill="var(--card)" stroke="var(--chart-2)" strokeWidth={2} />
+              <circle cx={hoveredPt.x} cy={hoveredPt.y} r={2} fill="var(--chart-2)" />
+            </g>
+          )}
+
+          {/* Hover detection zones */}
+          {rows.map((r, i) => {
+            const x = padL + slot * i;
+            return (
+              <rect
+                key={`detect-${i}`}
+                x={x}
+                y={padT}
+                width={slot}
+                height={innerH}
+                fill="transparent"
+                className="cursor-pointer"
+                onMouseEnter={() => setHoveredIdx(i)}
+                onMouseLeave={() => setHoveredIdx(null)}
+              />
+            );
+          })}
+        </svg>
+
+        {/* Floating tooltip */}
+        {hoveredIdx !== null && hoveredPt && (
+          <div
+            className="absolute z-50 rounded-xl border border-border bg-card/95 p-2 shadow-elevated backdrop-blur-sm transition-all pointer-events-none text-[11px] min-w-[100px]"
+            style={{
+              left: `${leftPercent}%`,
+              bottom: "4px",
+              transform: leftPercent > 80 ? "translateX(-100%)" : leftPercent < 20 ? "translateX(0)" : "translateX(-50%)",
+              marginLeft: leftPercent > 80 ? "-8px" : leftPercent < 20 ? "8px" : "0",
+            }}
+          >
+            <div className="font-semibold text-foreground mb-0.5">{fmtDay(hoveredPt.r.session_date)}</div>
+            <div className="flex items-center gap-1.5 text-muted-foreground">
+              <span className="h-2 w-2 rounded-sm bg-[var(--chart-2)]" />
+              <span>Regen: <strong className="text-foreground num">{fmt(hoveredPt.val, 1)}%</strong></span>
+            </div>
+          </div>
+        )}
       </div>
     </Panel>
   );

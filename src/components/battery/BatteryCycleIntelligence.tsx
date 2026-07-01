@@ -70,6 +70,7 @@ import { FleetMixView } from "./FleetMixView";
 import { HealthRiskView } from "./HealthRiskView";
 import { TrendsView } from "./TrendsView";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 
 type Layout = "spotlight" | "grid" | "compact";
 type ViewKey = "overview" | "mix" | "health" | "trends";
@@ -569,22 +570,34 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
                 ))}
               </div>
             </div>
-            <div className="flex h-44 items-end gap-2 overflow-x-auto pl-1">
-              {efcBars.map((grp) => (
-                <div key={grp.depot} className="flex h-full flex-col" style={{ flex: "1 0 140px" }}>
-                  <div className="flex flex-1 items-end justify-center gap-2.5">
-                    {grp.months.map((m, i) => (
-                      <div key={i} className="flex h-full max-w-[58px] flex-1 flex-col items-center justify-end">
-                        <span className="num mb-1.5 text-[11.5px] font-semibold" style={{ color: m.valColor }}>{m.val}</span>
-                        <div className="w-full rounded-t-md" style={{ height: `${m.h}%`, minHeight: 3, background: m.fill }} />
-                        <span className="mt-1.5 text-[10.5px] text-muted-foreground">{m.label}</span>
-                      </div>
-                    ))}
+            <TooltipProvider delayDuration={100}>
+              <div className="flex h-44 items-end gap-2 overflow-x-auto pl-1">
+                {efcBars.map((grp) => (
+                  <div key={grp.depot} className="flex h-full flex-col" style={{ flex: "1 0 140px" }}>
+                    <div className="flex flex-1 items-end justify-center gap-2.5">
+                      {grp.months.map((m, i) => (
+                        <Tooltip key={i}>
+                          <TooltipTrigger asChild>
+                            <div className="flex h-full max-w-[58px] flex-1 flex-col items-center justify-end cursor-pointer group/bar">
+                              <span className="num mb-1.5 text-[11.5px] font-semibold transition-opacity group-hover/bar:text-foreground" style={{ color: m.valColor }}>{m.val}</span>
+                              <div className="w-full rounded-t-md transition-all group-hover/bar:brightness-110 group-hover/bar:scale-x-[1.05]" style={{ height: `${m.h}%`, minHeight: 3, background: m.fill }} />
+                              <span className="mt-1.5 text-[10.5px] text-muted-foreground group-hover/bar:text-foreground">{m.label}</span>
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <div className="text-[11px] p-0.5">
+                              <p className="font-semibold text-foreground">{grp.depot}</p>
+                              <p className="text-muted-foreground mt-0.5">{m.label} 2026: <strong className="text-foreground num">{m.val} EFC</strong></p>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      ))}
+                    </div>
+                    <div className="mt-2.5 border-t border-border/60 pt-2.5 text-center text-[12.5px] font-semibold">{grp.depot}</div>
                   </div>
-                  <div className="mt-2.5 border-t border-border/60 pt-2.5 text-center text-[12.5px] font-semibold">{grp.depot}</div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </TooltipProvider>
           </div>
 
           {/* PER-BUS EXPLORER */}
@@ -815,6 +828,9 @@ function DailyChart({ rows }: { rows: CycleDailyRow[] }) {
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).filter(Boolean).join(" ");
 
+  const hoveredRow = hoveredIdx !== null ? rows[hoveredIdx] : null;
+  const leftPercent = hoveredIdx !== null ? ((padL + slot * hoveredIdx + slot / 2) / Math.max(W, n * 16)) * 100 : 0;
+
   return (
     <div className="relative overflow-x-auto rounded-xl border border-border/60 bg-muted/20 p-3">
       <svg width={Math.max(W, n * 16)} height={H} viewBox={`0 0 ${Math.max(W, n * 16)} ${H}`} className="block">
@@ -856,17 +872,24 @@ function DailyChart({ rows }: { rows: CycleDailyRow[] }) {
         {rtePts && <polyline points={rtePts} fill="none" stroke="var(--primary)" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />}
 
         {/* Highlight circle on line point when hovered */}
-        {hoveredIdx !== null && rows[hoveredIdx]?.daily_rte_pct != null && (() => {
-          const r = rows[hoveredIdx];
-          const cx = padL + slot * hoveredIdx + slot / 2;
-          const cy = padT + innerH - (Math.min(100, r.daily_rte_pct) / 100) * innerH;
-          return (
-            <>
-              <circle cx={cx} cy={cy} r={6} fill="var(--card)" stroke="var(--primary)" strokeWidth={2} pointerEvents="none" />
-              <circle cx={cx} cy={cy} r={2.5} fill="var(--primary)" pointerEvents="none" />
-            </>
-          );
-        })()}
+        {hoveredIdx !== null && hoveredRow && hoveredRow.daily_rte_pct != null && (
+          <g pointerEvents="none">
+            <circle
+              cx={padL + slot * hoveredIdx + slot / 2}
+              cy={padT + innerH - (Math.min(100, hoveredRow.daily_rte_pct) / 100) * innerH}
+              r={6}
+              fill="var(--card)"
+              stroke="var(--primary)"
+              strokeWidth={2}
+            />
+            <circle
+              cx={padL + slot * hoveredIdx + slot / 2}
+              cy={padT + innerH - (Math.min(100, hoveredRow.daily_rte_pct) / 100) * innerH}
+              r={2.5}
+              fill="var(--primary)"
+            />
+          </g>
+        )}
 
         {/* Hover detection vertical zones */}
         {rows.map((r, i) => {
@@ -893,33 +916,29 @@ function DailyChart({ rows }: { rows: CycleDailyRow[] }) {
       </div>
 
       {/* Floating interactive tooltip */}
-      {hoveredIdx !== null && rows[hoveredIdx] && (() => {
-        const r = rows[hoveredIdx];
-        const leftPercent = ((padL + slot * hoveredIdx + slot / 2) / Math.max(W, n * 16)) * 100;
-        return (
-          <div
-            className="absolute z-50 rounded-xl border border-border bg-card/95 p-2.5 shadow-elevated backdrop-blur-sm transition-all pointer-events-none text-[11.5px] min-w-[125px]"
-            style={{
-              left: `${leftPercent}%`,
-              top: "16px",
-              transform: leftPercent > 70 ? "translateX(-100%)" : leftPercent < 30 ? "translateX(0)" : "translateX(-50%)",
-              marginLeft: leftPercent > 70 ? "-8px" : leftPercent < 30 ? "8px" : "0",
-            }}
-          >
-            <div className="font-semibold text-foreground mb-1">{fmtDay(r.session_date)}</div>
-            <div className="flex items-center gap-1.5 text-muted-foreground">
-              <span className="h-2 w-2 rounded-sm bg-[var(--chart-4)]" />
-              <span>Gross: <strong className="text-foreground num">{fmt(r.gross_discharge_kwh, 1)}</strong> kWh</span>
-            </div>
-            {r.daily_rte_pct != null && (
-              <div className="flex items-center gap-1.5 text-muted-foreground mt-0.5">
-                <span className="h-2 w-2 rounded-sm bg-[var(--primary)]" />
-                <span>RTE: <strong className="text-foreground num">{fmt(r.daily_rte_pct, 1)}%</strong></span>
-              </div>
-            )}
+      {hoveredIdx !== null && hoveredRow && (
+        <div
+          className="absolute z-50 rounded-xl border border-border bg-card/95 p-2.5 shadow-elevated backdrop-blur-sm transition-all pointer-events-none text-[11.5px] min-w-[125px]"
+          style={{
+            left: `${leftPercent}%`,
+            top: "16px",
+            transform: leftPercent > 70 ? "translateX(-100%)" : leftPercent < 30 ? "translateX(0)" : "translateX(-50%)",
+            marginLeft: leftPercent > 70 ? "-8px" : leftPercent < 30 ? "8px" : "0",
+          }}
+        >
+          <div className="font-semibold text-foreground mb-1">{fmtDay(hoveredRow.session_date)}</div>
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <span className="h-2 w-2 rounded-sm bg-[var(--chart-4)]" />
+            <span>Gross: <strong className="text-foreground num">{fmt(hoveredRow.gross_discharge_kwh, 1)}</strong> kWh</span>
           </div>
-        );
-      })()}
+          {hoveredRow.daily_rte_pct != null && (
+            <div className="flex items-center gap-1.5 text-muted-foreground mt-0.5">
+              <span className="h-2 w-2 rounded-sm bg-[var(--primary)]" />
+              <span>RTE: <strong className="text-foreground num">{fmt(hoveredRow.daily_rte_pct, 1)}%</strong></span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

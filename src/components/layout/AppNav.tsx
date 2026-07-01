@@ -152,9 +152,11 @@ export function AppNav() {
     <header className="sticky top-0 z-40 border-b border-border/50 glass">
       <div className="mx-auto flex h-[4.25rem] max-w-[1600px] items-center gap-2 px-4 lg:px-6">
         <Link to="/" className="group flex shrink-0 items-center gap-3">
-          <div className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl bg-primary/12 text-primary ring-1 ring-primary/25 transition-transform group-hover:scale-[1.02]">
-            <Bolt className="relative h-4 w-4" strokeWidth={2.25} />
-          </div>
+          <img
+            src="/favicon.png"
+            alt="Transvolt Mobility"
+            className="h-8 w-auto opacity-95 transition-transform group-hover:scale-[1.02]"
+          />
           <div className="hidden leading-tight sm:block">
             <div className="text-[14px] font-semibold tracking-tight">Voltline</div>
             <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
@@ -162,15 +164,6 @@ export function AppNav() {
             </div>
           </div>
         </Link>
-
-        <div className="hidden shrink-0 items-center gap-2.5 sm:flex">
-          <span className="h-7 w-px bg-border/60" aria-hidden />
-          <img
-            src="/favicon.png"
-            alt="Transvolt Mobility"
-            className="h-6 w-auto opacity-90"
-          />
-        </div>
 
         <nav className="hidden min-w-0 flex-1 items-center gap-0.5 overflow-x-auto lg:flex">
           <DropdownMenu>
