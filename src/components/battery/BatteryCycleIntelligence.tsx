@@ -69,6 +69,7 @@ import { fmt, Seg, Sparkline } from "./charts";
 import { FleetMixView } from "./FleetMixView";
 import { HealthRiskView } from "./HealthRiskView";
 import { TrendsView } from "./TrendsView";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 
 type Layout = "spotlight" | "grid" | "compact";
 type ViewKey = "overview" | "mix" | "health" | "trends";
@@ -408,9 +409,13 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
       </div>
 
       {/* ===== SHARED DRILL DRAWER ===== */}
-      {selected && liveDrill && drawerMonthKey && (
-        <BusDrillDrawer reg={selected.bus.reg} type={selected.bus.type} monthName={selected.monthName} reportMonth={drawerMonthKey} summary={selected.bus} onClose={() => setSelected(null)} />
-      )}
+      <Dialog open={!!(selected && liveDrill && drawerMonthKey)} onOpenChange={(open) => !open && setSelected(null)}>
+        <DialogContent className="max-w-5xl p-0 overflow-hidden border-none bg-transparent shadow-none [&>button]:hidden">
+          {selected && liveDrill && drawerMonthKey && (
+            <BusDrillDrawer reg={selected.bus.reg} type={selected.bus.type} monthName={selected.monthName} reportMonth={drawerMonthKey} summary={selected.bus} onClose={() => setSelected(null)} />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ===== OVERVIEW ===== */}
       {view === "overview" && (
