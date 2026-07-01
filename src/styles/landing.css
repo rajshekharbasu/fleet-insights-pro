@@ -1,0 +1,63 @@
+/**
+ * Landing / Login page — animation + helper classes.
+ *
+ * Import once (e.g. in main.tsx or alongside styles.css):
+ *   import "@/styles/landing.css";
+ *
+ * Design tokens (--primary, --card, --chart-1..5, --glow-primary, fonts, etc.)
+ * come from the app's existing styles.css — this file only adds the keyframes
+ * and the stateful helper classes that can't be expressed as inline styles.
+ */
+
+@keyframes lpFadeUp { from { opacity: 0; transform: translateY(22px); } to { opacity: 1; transform: none; } }
+@keyframes lpFadeScale { from { opacity: 0; transform: scale(.93); } to { opacity: 1; transform: none; } }
+@keyframes lpPop { 0% { opacity: 0; transform: translate(-50%,-50%) scale(.4); } 70% { transform: translate(-50%,-50%) scale(1.08); } 100% { opacity: 1; transform: translate(-50%,-50%) scale(1); } }
+@keyframes lpSpin { to { transform: rotate(360deg); } }
+@keyframes lpRing { 0% { transform: translate(-50%,-50%) scale(.55); opacity: .55; } 80% { opacity: 0; } 100% { transform: translate(-50%,-50%) scale(2.3); opacity: 0; } }
+@keyframes lpFlow { to { stroke-dashoffset: -16; } }
+@keyframes lpCore { 0%,100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 30%, transparent), 0 24px 60px -20px var(--glow-primary); } 50% { box-shadow: 0 0 44px 6px color-mix(in oklab, var(--primary) 26%, transparent), 0 24px 60px -20px var(--glow-primary); } }
+@keyframes lpBlink { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+@keyframes lpMarquee { to { transform: translateX(-50%); } }
+@keyframes lpShimmer { to { transform: translateX(220%) skewX(-18deg); } }
+@keyframes lpSpinner { to { transform: rotate(360deg); } }
+@keyframes lpGridDrift { to { background-position: 48px 48px; } }
+
+.lp-reveal { opacity: 0; transform: translateY(26px); transition: opacity .7s cubic-bezier(.2,.7,.2,1), transform .7s cubic-bezier(.2,.7,.2,1); }
+.lp-reveal.in { opacity: 1; transform: none; }
+
+.lp-node { transition: transform .3s cubic-bezier(.2,.7,.2,1); }
+.lp-node:hover { transform: translate(-50%,-50%) scale(1.09); }
+.lp-node:hover .lp-node-ic { box-shadow: 0 0 0 1px color-mix(in oklab, var(--nc) 60%, transparent), 0 12px 30px -10px color-mix(in oklab, var(--nc) 55%, transparent); }
+.lp-node-label { opacity: 0; transition: opacity .25s ease, transform .25s ease; transform: translate(-50%,4px); }
+.lp-node:hover .lp-node-label { opacity: 1; }
+
+.lp-card { transition: border-color .25s ease, box-shadow .25s ease, transform .25s ease; }
+.lp-card:hover { transform: translateY(-4px); border-color: color-mix(in oklab, var(--ac) 45%, var(--border)); box-shadow: 0 1px 0 0 color-mix(in oklab, var(--ac) 14%, transparent) inset, 0 22px 50px -22px color-mix(in oklab, var(--ac) 55%, transparent); }
+.lp-card:hover .lp-card-ic { transform: scale(1.06) rotate(-3deg); }
+.lp-card-ic { transition: transform .3s cubic-bezier(.2,.7,.2,1); }
+
+.ms-btn { position: relative; overflow: hidden; transition: transform .18s ease, box-shadow .25s ease; }
+.ms-btn:hover { transform: translateY(-2px); box-shadow: 0 16px 38px -14px color-mix(in oklab, var(--primary) 40%, transparent), 0 0 0 1px color-mix(in oklab, var(--primary) 30%, transparent); }
+.ms-btn:active { transform: translateY(0); }
+.ms-btn::after { content: ""; position: absolute; top: -30%; left: -60%; width: 40%; height: 160%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent); transform: translateX(0) skewX(-18deg); }
+.ms-btn:hover::after { animation: lpShimmer .9s ease; }
+
+.lp-ghost { transition: border-color .2s ease, background .2s ease, color .2s ease; }
+.lp-ghost:hover { border-color: color-mix(in oklab, var(--primary) 50%, var(--border)); background: color-mix(in oklab, var(--primary) 8%, transparent); color: var(--foreground); }
+.lp-navlink { transition: color .2s ease; }
+.lp-navlink:hover { color: var(--foreground); }
+.lp-iconbtn { transition: border-color .2s ease, background .2s ease; }
+.lp-iconbtn:hover { border-color: color-mix(in oklab, var(--primary) 45%, var(--border)); background: color-mix(in oklab, var(--primary) 8%, transparent); }
+.lp-marquee-track { animation: lpMarquee 38s linear infinite; }
+.lp-marquee:hover .lp-marquee-track { animation-play-state: paused; }
+
+@media (max-width: 880px) {
+  .lp-hero { grid-template-columns: 1fr !important; }
+  .lp-diagram-wrap { order: -1; }
+  .lp-nav-links { display: none !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-reveal { opacity: 1 !important; transform: none !important; transition: none; }
+  .lp-root [style*="animation"] { animation: none !important; }
+}

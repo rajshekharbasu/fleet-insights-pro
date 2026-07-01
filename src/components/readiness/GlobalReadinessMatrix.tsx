@@ -55,8 +55,17 @@ export function GlobalReadinessMatrix() {
   } | null>(null);
 
   const { sites, items } = useMemo(() => {
-    if (!matrixItems || !sitesDropdown) return { sites: [], items: [] };
-    const siteNames = sitesDropdown.map(s => s.name);
+    if (!matrixItems) return { sites: [], items: [] };
+    
+    const uniqueSites = new Set<string>();
+    if (sitesDropdown) {
+      sitesDropdown.forEach(s => uniqueSites.add(s.name));
+    }
+    matrixItems.forEach(m => {
+      if (m.site_name) uniqueSites.add(m.site_name);
+    });
+    const siteNames = Array.from(uniqueSites);
+    
     const itemMap = new Map<string, any>();
     
     matrixItems.forEach(m => {

@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 
 import appCss from "../styles.css?url";
+import landingCss from "../styles/landing.css?url";
 import { ThemeProvider } from "@/hooks/use-theme";
 import { CommandPaletteProvider } from "@/components/layout/CommandPalette";
 import { Toaster } from "@/components/ui/sonner";
@@ -100,6 +101,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       {
         rel: "stylesheet",
         href: appCss,
+      },
+      {
+        rel: "stylesheet",
+        href: landingCss,
       },
     ],
   }),
