@@ -155,7 +155,7 @@ export async function fetchSitesDropdown(): Promise<SiteDropdownItem[]> {
       code: site.code,
       location: site.location,
       is_active: site.is_active,
-      site_type: dropItem?.site_type || "—",
+      site_type: dropItem?.site_type || site.site_type || "—",
       project_id: site.project_id,
       project_name: site.project_name
     };
