@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import L from "leaflet";
-import { CircleMarker, MapContainer, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
+import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
 import { useTheme } from "@/hooks/use-theme";
 import type { RouteContext, SegmentRisk } from "@/lib/fleet-data";
 import {
@@ -16,10 +16,10 @@ import {
   MUMBAI_CENTER,
   MUMBAI_DEFAULT_ZOOM,
   mumbaiBounds,
-  normToLngLat,
   pointCollectionBounds,
   riskColor,
   routeBounds,
+  routeColor,
   segmentIntensity,
   type HotspotKind,
 } from "@/lib/geo-data";
@@ -61,6 +61,7 @@ function routeStrokeColor(
   difficulty: number,
   focusRouteId?: string,
   accentColor?: string,
+  perRouteColors = false,
 ): { color: string; weight: number; opacity: number } {
   const isFocus = focusRouteId === routeId;
   const isBackground = focusRouteId && !isFocus;
@@ -74,7 +75,28 @@ function routeStrokeColor(
   if (isBackground) {
     return { color: "#64748b", weight: 2, opacity: 0.22 };
   }
+  if (perRouteColors) {
+    return { color: routeColor(routeId), weight: 4, opacity: 0.85 };
+  }
   return { color: riskColor(difficulty), weight: 3, opacity: 0.75 };
+}
+
+const START_MARKER_COLOR = "#22c55e";
+
+function routeEndpointIcon(label: "S" | "E", fillColor: string, size: number): L.DivIcon {
+  return L.divIcon({
+    className: "route-endpoint-icon",
+    html: `<span style="
+      display:flex;align-items:center;justify-content:center;
+      width:${size}px;height:${size}px;border-radius:9999px;
+      background:${fillColor};border:2px solid #fff;
+      box-shadow:0 1px 4px rgba(0,0,0,.35);
+      font-size:${Math.round(size * 0.42)}px;font-weight:700;color:#fff;
+      font-family:system-ui,sans-serif;line-height:1;
+    ">${label}</span>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
 }
 
 export interface FleetMapProps {
@@ -96,7 +118,7 @@ export interface FleetMapProps {
   fitTrigger?: string;
   /** Only render the focused route — for side-by-side compare panels. */
   soloRoute?: boolean;
-  /** Start / end markers on the focused corridor. */
+  /** Start / end markers on each visible route corridor. */
   showEndpoints?: boolean;
   onSegmentHover?: (s: SegmentRisk | null) => void;
   onSegmentClick?: (s: SegmentRisk) => void;
@@ -146,12 +168,31 @@ export function FleetMap({
   );
 
   const endpoints = useMemo(() => {
-    if (!showEndpoints || !focusRoute?.path.length) return null;
-    const pts = focusRoute.path;
-    const start = normToLngLat(pts[0].x, pts[0].y);
-    const end = normToLngLat(pts[pts.length - 1].x, pts[pts.length - 1].y);
-    return { start, end };
-  }, [showEndpoints, focusRoute]);
+    if (!showEndpoints) return [];
+    return routeCollection.features
+      .filter((f) => f.geometry.coordinates.length >= 2)
+      .map((f) => {
+        const coords = f.geometry.coordinates as [number, number][];
+        const isFocus = focusRouteId === f.properties.route_id;
+        const endColor =
+          isFocus && accentColor ? accentColor : routeColor(f.properties.route_id);
+        const size =
+          soloRoute || routeCollection.features.length <= 2
+            ? 22
+            : routeCollection.features.length <= 6
+              ? 18
+              : 15;
+        return {
+          routeId: f.properties.route_id,
+          routeCode: f.properties.route_code,
+          routeName: f.properties.route_name,
+          start: coords[0],
+          end: coords[coords.length - 1],
+          endColor,
+          size,
+        };
+      });
+  }, [showEndpoints, routeCollection, focusRouteId, accentColor, soloRoute]);
 
   const segmentSpans = useMemo(
     () => (focusRoute ? buildSegmentSpanCollection(focusRoute, segments) : null),
@@ -236,6 +277,14 @@ export function FleetMap({
   const highRiskSegs =
     segmentSpans?.features.filter((f) => f.properties.risk_score >= 70).length ?? 0;
 
+  const usePerRouteColors = !focusRouteId && displayRoutes.length > 0;
+
+  const legendRoutes = useMemo(
+    () =>
+      [...displayRoutes].sort((a, b) => a.route_code.localeCompare(b.route_code)),
+    [displayRoutes],
+  );
+
   return (
     <div
       className={`fleet-map-shell relative overflow-hidden rounded-2xl border shadow-elevated transition-[box-shadow,border-color] duration-500 ${dark ? "fleet-map-dark" : "fleet-map-light"} ${flightPulse ? "map-flight-pulse" : ""}`}
@@ -282,6 +331,7 @@ export function FleetMap({
             f.properties.difficulty_score,
             focusRouteId,
             accentColor,
+            usePerRouteColors,
           );
           const latLngs = f.geometry.coordinates.map(
             ([lng, lat]) => [lat, lng] as [number, number],
@@ -309,6 +359,7 @@ export function FleetMap({
             f.properties.difficulty_score,
             focusRouteId,
             accentColor,
+            usePerRouteColors,
           );
           const latLngs = f.geometry.coordinates.map(
             ([lng, lat]) => [lat, lng] as [number, number],
@@ -386,38 +437,32 @@ export function FleetMap({
           </CircleMarker>
         ))}
 
-        {endpoints && (
-          <>
-            <CircleMarker
-              center={[endpoints.start[1], endpoints.start[0]]}
-              radius={9}
-              pathOptions={{
-                color: "#fff",
-                fillColor: "#22c55e",
-                fillOpacity: 1,
-                weight: 2.5,
-              }}
+        {endpoints.map((ep) => (
+          <Fragment key={ep.routeId}>
+            <Marker
+              position={[ep.start[1], ep.start[0]]}
+              icon={routeEndpointIcon("S", START_MARKER_COLOR, ep.size)}
             >
               <Popup>
-                <div className="text-[12px] font-semibold">Start</div>
+                <div className="min-w-[140px] space-y-0.5 text-[12px]">
+                  <div className="font-semibold">{ep.routeCode} · Start</div>
+                  <div className="text-muted-foreground">{ep.routeName}</div>
+                </div>
               </Popup>
-            </CircleMarker>
-            <CircleMarker
-              center={[endpoints.end[1], endpoints.end[0]]}
-              radius={9}
-              pathOptions={{
-                color: "#fff",
-                fillColor: accentColor ?? "#f97316",
-                fillOpacity: 1,
-                weight: 2.5,
-              }}
+            </Marker>
+            <Marker
+              position={[ep.end[1], ep.end[0]]}
+              icon={routeEndpointIcon("E", ep.endColor, ep.size)}
             >
               <Popup>
-                <div className="text-[12px] font-semibold">End</div>
+                <div className="min-w-[140px] space-y-0.5 text-[12px]">
+                  <div className="font-semibold">{ep.routeCode} · End</div>
+                  <div className="text-muted-foreground">{ep.routeName}</div>
+                </div>
               </Popup>
-            </CircleMarker>
-          </>
-        )}
+            </Marker>
+          </Fragment>
+        ))}
 
         {dmsMode !== "none" &&
           eventCollection.features.map((ev, i) => {
@@ -497,7 +542,7 @@ export function FleetMap({
         </div>
       )}
 
-      {showLegend && !focusRouteId && (
+      {showLegend && !focusRouteId && kindsForLegend.length > 0 && (
         <div className="pointer-events-none absolute bottom-3 left-3 z-[1000] flex flex-wrap items-center gap-1.5 rounded-xl border border-border/50 bg-card/92 px-2.5 py-1.5 text-[10.5px] backdrop-blur-md">
           {kindsForLegend.map((k) => (
             <span key={k} className="inline-flex items-center gap-1.5 px-1">
@@ -505,6 +550,73 @@ export function FleetMap({
               <span className="text-muted-foreground">{KIND_LABEL[k]}</span>
             </span>
           ))}
+        </div>
+      )}
+
+      {showLegend && usePerRouteColors && legendRoutes.length > 1 && (
+        <div className="pointer-events-auto absolute bottom-3 right-3 z-[1000] max-h-[220px] max-w-[min(280px,calc(100%-1.5rem))] overflow-y-auto rounded-xl border border-border/50 bg-card/92 px-2.5 py-2 text-[10.5px] backdrop-blur-md">
+          <div className="section-label mb-1.5">Routes</div>
+          <div className="flex flex-col gap-1">
+            {legendRoutes.map((r) => (
+              <span
+                key={r.route_id}
+                className="inline-flex min-w-0 items-center gap-2"
+                title={r.route_name}
+              >
+                <span
+                  className="h-1.5 w-4 shrink-0 rounded-full"
+                  style={{ background: routeColor(r.route_id) }}
+                />
+                <span className="num shrink-0 font-medium">{r.route_code}</span>
+                <span className="truncate text-muted-foreground">{r.route_name}</span>
+              </span>
+            ))}
+          </div>
+          {showEndpoints && (
+            <div className="mt-2 flex flex-col gap-1 border-t border-border/40 pt-2">
+              <span className="inline-flex items-center gap-2">
+                <span
+                  className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[8px] font-bold text-white"
+                  style={{ background: START_MARKER_COLOR }}
+                >
+                  S
+                </span>
+                <span className="text-muted-foreground">Route start</span>
+              </span>
+              <span className="inline-flex items-center gap-2">
+                <span
+                  className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[8px] font-bold text-white"
+                  style={{ background: routeColor(legendRoutes[0]?.route_id ?? "") }}
+                >
+                  E
+                </span>
+                <span className="text-muted-foreground">Route end (route color)</span>
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showLegend && showEndpoints && (!usePerRouteColors || legendRoutes.length <= 1) && (
+        <div className="pointer-events-none absolute bottom-3 right-3 z-[1000] flex flex-col gap-1 rounded-xl border border-border/50 bg-card/92 px-2.5 py-2 text-[10.5px] backdrop-blur-md">
+          <span className="inline-flex items-center gap-2">
+            <span
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[8px] font-bold text-white"
+              style={{ background: START_MARKER_COLOR }}
+            >
+              S
+            </span>
+            <span className="text-muted-foreground">Start</span>
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <span
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[8px] font-bold text-white"
+              style={{ background: accentColor ?? "#f97316" }}
+            >
+              E
+            </span>
+            <span className="text-muted-foreground">End</span>
+          </span>
         </div>
       )}
     </div>

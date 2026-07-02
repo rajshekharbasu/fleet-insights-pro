@@ -2,19 +2,20 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
-  AlertTriangle, Layers, Sparkles, ShieldAlert, TrendingDown, TrendingUp, X,
+  AlertTriangle, Layers, Loader2, Sparkles, ShieldAlert, TrendingDown, TrendingUp, X,
 } from "lucide-react";
 import { PageShell } from "@/components/layout/AppNav";
 import { InsightCard } from "@/components/dashboard/InsightCard";
 import { SegmentRiskMapLoader } from "@/components/maps/SegmentRiskMapLoader";
-import { SEGMENTS, type SegmentRisk } from "@/lib/fleet-data";
 import { buildCorrelationMatrix, fetchMartSegmentCorrelation } from "@/lib/graphql/segments";
 import { fetchRouteGeojson } from "@/lib/graphql/routes";
 import {
+  fetchImprovingSegments,
   fetchSegmentRiskCompanies,
   fetchSegmentRiskMap,
   fetchSegmentRiskRoutes,
   fetchTopDangerousSegments,
+  fetchWorseningSegments,
   normalizeRiskLevel,
   RISK_LEVEL_COLOR,
   RISK_LEVEL_ORDER,
@@ -39,41 +40,39 @@ export const Route = createFileRoute("/segments")({
 const fmt = (n: number, d = 1) =>
   n.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
 
-function computeSegmentCorrelationMatrix(segments: SegmentRisk[]) {
-  const fields = ["harsh_braking", "overspeed", "distraction", "drowsiness", "rough_road", "energy_leakage_kwh"] as const;
-  const labels = ["Braking", "Overspeed", "Distraction", "Drowsy", "Rough", "Leakage"];
-  const matrix = fields.map((a) =>
-    fields.map((b) => {
-      const xs = segments.map((s) => s[a]);
-      const ys = segments.map((s) => s[b]);
-      const mx = xs.reduce((s, v) => s + v, 0) / xs.length;
-      const my = ys.reduce((s, v) => s + v, 0) / ys.length;
-      let num = 0, dx = 0, dy = 0;
-      for (let i = 0; i < xs.length; i++) {
-        num += (xs[i] - mx) * (ys[i] - my);
-        dx += (xs[i] - mx) ** 2;
-        dy += (ys[i] - my) ** 2;
-      }
-      const corr = num / Math.sqrt(dx * dy || 1);
-      return +corr.toFixed(2);
-    }),
+function LoadingPanel({
+  label,
+  className = "py-6",
+  minHeight,
+}: {
+  label: string;
+  className?: string;
+  minHeight?: string;
+}) {
+  return (
+    <div
+      className={`flex flex-col items-center justify-center gap-2.5 text-muted-foreground ${className}`}
+      style={minHeight ? { minHeight } : undefined}
+    >
+      <Loader2 className="h-5 w-5 animate-spin text-primary" />
+      <span className="text-[12.5px]">{label}</span>
+    </div>
   );
-  return { labels, matrix };
 }
 
 function CorrelationMatrix({
-  segments,
   correlationRow,
   isLoading,
+  isError,
 }: {
-  segments: SegmentRisk[];
   correlationRow?: Awaited<ReturnType<typeof fetchMartSegmentCorrelation>>;
   isLoading?: boolean;
+  isError?: boolean;
 }) {
   const useLiveData = !!correlationRow;
   const { labels, matrix } = useMemo(
-    () => (correlationRow ? buildCorrelationMatrix(correlationRow) : computeSegmentCorrelationMatrix(segments)),
-    [segments, correlationRow],
+    () => (correlationRow ? buildCorrelationMatrix(correlationRow) : { labels: [] as string[], matrix: [] as number[][] }),
+    [correlationRow],
   );
 
   return (
@@ -90,8 +89,14 @@ function CorrelationMatrix({
         )}
       </div>
       {isLoading ? (
+        <LoadingPanel label="Loading correlation data…" className="h-48" />
+      ) : isError ? (
+        <div className="flex h-48 items-center justify-center text-[12.5px] text-destructive">
+          Failed to load correlation data.
+        </div>
+      ) : !useLiveData ? (
         <div className="flex h-48 items-center justify-center text-[12.5px] text-muted-foreground">
-          Loading correlation data…
+          No correlation data available.
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -264,7 +269,7 @@ function LiveSegmentRiskSection() {
                     >
                       <span className="h-2 w-2 rounded-full" style={{ background: RISK_LEVEL_COLOR[lvl] }} />
                       {lvl}
-                      <span className="num text-muted-foreground">{counts[lvl]}</span>
+                      <span className="num text-muted-foreground">{isLoading ? "—" : counts[lvl]}</span>
                     </button>
                   );
                 })}
@@ -353,10 +358,8 @@ function LiveSegmentRiskSection() {
             <div className="flex h-[560px] items-center justify-center rounded-xl border border-destructive/30 bg-destructive/5 text-[13px] text-destructive">
               Failed to load segment risk data{error instanceof Error ? `: ${error.message}` : ""}.
             </div>
-          ) : isLoading ? (
-            <div className="flex h-[560px] items-center justify-center rounded-xl border border-border/50 bg-muted/20 text-[13px] text-muted-foreground">
-              Loading segment risk map…
-            </div>
+          ) : isLoading && !data ? (
+            <LoadingPanel label="Loading segment risk map…" minHeight="560px" className="rounded-xl border border-border/50 bg-muted/20" />
           ) : rows.length === 0 ? (
             <div className="flex h-[560px] flex-col items-center justify-center gap-1 rounded-xl border border-border/50 bg-muted/20 text-center">
               <ShieldAlert className="h-5 w-5 text-muted-foreground" />
@@ -377,6 +380,16 @@ function LiveSegmentRiskSection() {
       </div>
     </section>
   );
+}
+
+function routePrimaryLabel(row: SegmentRiskMapRow): string {
+  return row.route_name || (row.route_code ? `Route ${row.route_code}` : `Route ${row.route_id}`);
+}
+
+function routeSecondaryLabel(row: SegmentRiskMapRow): string | null {
+  if (row.route_code) return row.route_code;
+  if (row.route_name) return row.segment_id;
+  return null;
 }
 
 const RISK_LABEL: Record<SegmentRiskLevel, string> = {
@@ -431,9 +444,7 @@ function TopDangerousSegments() {
           Failed to load segments{error instanceof Error ? `: ${error.message}` : ""}.
         </div>
       ) : isLoading ? (
-        <div className="flex h-40 items-center justify-center text-[12.5px] text-muted-foreground">
-          Loading dangerous segments…
-        </div>
+        <LoadingPanel label="Loading dangerous segments…" minHeight="160px" />
       ) : rows.length === 0 ? (
         <div className="flex h-40 items-center justify-center text-[12.5px] text-muted-foreground">
           No segment risk data available.
@@ -451,9 +462,9 @@ function TopDangerousSegments() {
               >
                 <span className="num text-[12px] text-muted-foreground">{i + 1}</span>
                 <div className="min-w-0">
-                  <div className="truncate text-[13px] font-medium num">{s.segment_id}</div>
+                  <div className="truncate text-[13px] font-medium">{routePrimaryLabel(s)}</div>
                   <div className="truncate text-[11px] text-muted-foreground">
-                    {s.route_code ? `Rte ${s.route_code} · ` : ""}
+                    {routeSecondaryLabel(s) ? `${routeSecondaryLabel(s)} · ` : ""}
                     {s.dms_event_count} DMS · {s.hard_braking_count} brake · {fmt(s.avg_speed)} km/h
                   </div>
                 </div>
@@ -480,6 +491,82 @@ function TopDangerousSegments() {
   );
 }
 
+function TrendSegmentRow({ row, mode }: { row: SegmentRiskMapRow; mode: "improving" | "worsening" }) {
+  const level = normalizeRiskLevel(row.risk_level);
+  const change = row.difficulty_change_pct;
+  const positive = mode === "worsening";
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md px-1 py-2 text-[12px]">
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-medium">{routePrimaryLabel(row)}</div>
+        <div className="flex items-center gap-2 text-[10.5px] text-muted-foreground">
+          {routeSecondaryLabel(row) && <span className="num">{routeSecondaryLabel(row)}</span>}
+          <span className="num">score {fmt(row.segment_difficulty_score, 0)}</span>
+          <RiskBadge level={level} />
+        </div>
+      </div>
+      {change !== null ? (
+        <span className={`num shrink-0 font-medium ${positive ? "text-destructive" : "text-success"}`}>
+          {change > 0 ? "+" : ""}
+          {fmt(change)}%
+        </span>
+      ) : (
+        <span className="shrink-0 capitalize text-muted-foreground">{row.trend_direction}</span>
+      )}
+    </div>
+  );
+}
+
+function TrendSegmentsCard({
+  mode,
+  title,
+  icon: Icon,
+  iconClass,
+}: {
+  mode: "improving" | "worsening";
+  title: string;
+  icon: typeof TrendingUp;
+  iconClass: string;
+}) {
+  const fetcher = mode === "worsening" ? fetchWorseningSegments : fetchImprovingSegments;
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["mart_segment_risk_map", mode, 6],
+    queryFn: () => fetcher(undefined, 6),
+  });
+  const rows = data ?? [];
+
+  return (
+    <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-elevated">
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <h3 className="text-[15px] font-semibold tracking-tight">{title}</h3>
+          <p className="text-[11.5px] text-muted-foreground">
+            Live trend from <span className="num">mart_segment_risk_map</span>
+          </p>
+        </div>
+        <Icon className={`h-4 w-4 ${iconClass}`} />
+      </div>
+      {isError ? (
+        <div className="py-6 text-center text-[12px] text-destructive">
+          Failed to load{error instanceof Error ? `: ${error.message}` : ""}.
+        </div>
+      ) : isLoading ? (
+        <LoadingPanel label="Loading trend segments…" />
+      ) : rows.length === 0 ? (
+        <div className="py-6 text-center text-[12px] text-muted-foreground">
+          No {mode} segments in the current snapshot.
+        </div>
+      ) : (
+        <div className="divide-y divide-border/40">
+          {rows.map((row) => (
+            <TrendSegmentRow key={row.segment_id} row={row} mode={mode} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LiveSegmentDrawer({ segment, onClose }: { segment: SegmentRiskMapRow; onClose: () => void }) {
   const level = normalizeRiskLevel(segment.risk_level);
   const events = [
@@ -494,9 +581,10 @@ function LiveSegmentDrawer({ segment, onClose }: { segment: SegmentRiskMapRow; o
       <div className="fixed inset-0 z-40 bg-background/70 backdrop-blur-sm animate-fade-in" onClick={onClose} />
       <aside className="fixed right-0 top-0 z-50 h-full w-full max-w-md overflow-y-auto border-l border-border/60 bg-card shadow-elevated animate-slide-in-right">
         <div className="flex items-center justify-between border-b border-border/60 px-5 py-4">
-          <div>
+          <div className="min-w-0">
             <div className="text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">Segment drilldown</div>
-            <div className="num text-[16px] font-semibold">{segment.segment_id}</div>
+            <div className="truncate text-[16px] font-semibold">{routePrimaryLabel(segment)}</div>
+            <div className="num truncate text-[11px] text-muted-foreground">{segment.segment_id}</div>
           </div>
           <button onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground">
             <X className="h-4 w-4" />
@@ -566,13 +654,10 @@ function LiveSegmentDrawer({ segment, onClose }: { segment: SegmentRiskMapRow; o
 }
 
 function SegmentRiskPage() {
-  const { data: correlationRow, isLoading: correlationLoading } = useQuery({
+  const { data: correlationRow, isLoading: correlationLoading, isError: correlationError } = useQuery({
     queryKey: ["mart_segment_correlation"],
     queryFn: () => fetchMartSegmentCorrelation(),
   });
-
-  const worsening = useMemo(() => [...SEGMENTS].sort((a, b) => b.trend_30d - a.trend_30d).slice(0, 6), []);
-  const improving = useMemo(() => [...SEGMENTS].sort((a, b) => a.trend_30d - b.trend_30d).slice(0, 6), []);
 
   return (
     <PageShell
@@ -588,34 +673,8 @@ function SegmentRiskPage() {
         <TopDangerousSegments />
 
         <div className="space-y-4">
-          <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-elevated">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-[15px] font-semibold tracking-tight">Worsening</h3>
-              <TrendingUp className="h-4 w-4 text-destructive" />
-            </div>
-            <div className="space-y-2">
-              {worsening.map((s) => (
-                <div key={s.segment_id} className="flex items-center justify-between text-[12px]">
-                  <span className="num">{s.segment_id}</span>
-                  <span className="num text-destructive">+{fmt(s.trend_30d)}%</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-elevated">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-[15px] font-semibold tracking-tight">Improving</h3>
-              <TrendingDown className="h-4 w-4 text-success" />
-            </div>
-            <div className="space-y-2">
-              {improving.map((s) => (
-                <div key={s.segment_id} className="flex items-center justify-between text-[12px]">
-                  <span className="num">{s.segment_id}</span>
-                  <span className="num text-success">{fmt(s.trend_30d)}%</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <TrendSegmentsCard mode="worsening" title="Worsening" icon={TrendingUp} iconClass="text-destructive" />
+          <TrendSegmentsCard mode="improving" title="Improving" icon={TrendingDown} iconClass="text-success" />
         </div>
       </section>
 
@@ -623,9 +682,9 @@ function SegmentRiskPage() {
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <div className="xl:col-span-2">
           <CorrelationMatrix
-            segments={SEGMENTS}
             correlationRow={correlationRow}
             isLoading={correlationLoading}
+            isError={correlationError}
           />
         </div>
         <div className="space-y-3">
