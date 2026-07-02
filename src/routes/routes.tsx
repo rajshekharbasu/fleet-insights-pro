@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Brain,
   Flame,
+  Loader2,
   MapPin,
   Mountain,
   Snowflake,
@@ -217,6 +218,31 @@ export const Route = createFileRoute("/routes")({
 const fmt = (n: number, d = 1) =>
   n.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
 
+function LoadingPanel({
+  label,
+  className = "h-[400px] rounded-2xl border border-border/60 bg-muted/15",
+}: {
+  label: string;
+  className?: string;
+}) {
+  return (
+    <div className={`flex flex-col items-center justify-center gap-2.5 text-muted-foreground ${className}`}>
+      <Loader2 className="h-5 w-5 animate-spin text-primary" />
+      <span className="text-[12.5px]">{label}</span>
+    </div>
+  );
+}
+
+function MiniStatSkeleton() {
+  return (
+    <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-elevated">
+      <div className="h-3 w-20 animate-pulse rounded bg-muted/50" />
+      <div className="mt-3 h-8 w-24 animate-pulse rounded bg-muted/40" />
+      <div className="mt-2 h-3 w-28 animate-pulse rounded bg-muted/30" />
+    </div>
+  );
+}
+
 function MiniStat({ label, value, unit, hint, name, tone = "default" }: {
   label: string; value: string; unit?: string; hint?: string; name?: string;
   tone?: "default" | "warning" | "success" | "destructive";
@@ -420,7 +446,7 @@ function RouteIntelligencePage() {
     queryFn: () => fetchRouteGeometry(500),
   });
 
-  const { data: geojsonRows } = useQuery({
+  const { data: geojsonRows, isLoading: geojsonLoading } = useQuery({
     queryKey: ["route_geometry_fact"],
     queryFn: () => fetchRouteGeojson(500),
   });
@@ -475,7 +501,10 @@ function RouteIntelligencePage() {
         .sort((a, b) => b.difficulty_score - a.difficulty_score),
     [search],
   );
-  const useGraphQlLeaderboard = sortedLeaderboard.length > 0;
+  const leaderboardReady = !leaderboardLoading;
+  const useGraphQlLeaderboard = leaderboardReady && sortedLeaderboard.length > 0;
+  const useMockFallback = leaderboardReady && !useGraphQlLeaderboard;
+  const isPageLoading = leaderboardLoading || geojsonLoading;
 
   const hardest = useGraphQlLeaderboard ? leaderboardAgg.hardest! : sortedMock[0];
   const easiest = useGraphQlLeaderboard ? leaderboardAgg.easiest! : sortedMock[sortedMock.length - 1];
@@ -622,7 +651,7 @@ function RouteIntelligencePage() {
           <div className="mt-0.5 flex items-center justify-end gap-1.5">
             <MapPin className="h-3.5 w-3.5 text-primary" />
             <span className="text-[14px] font-semibold tracking-tight">
-              {hasGeoRoutes ? geoRoutes.length : ROUTES.length} routes
+              {isPageLoading ? "…" : hasGeoRoutes ? geoRoutes.length : useMockFallback ? ROUTES.length : 0} routes
             </span>
           </div>
           <div className="text-[11px] num text-muted-foreground">
@@ -640,67 +669,88 @@ function RouteIntelligencePage() {
 
       {/* Map comparison — primary interaction */}
       <section className="space-y-3">
-        <RouteComparePanel
-          routes={panelRoutes}
-          segments={hasGeoRoutes ? [] : SEGMENTS}
-          compareIds={compareIds}
-          kinds={kinds}
-        />
+        {isPageLoading ? (
+          <LoadingPanel label="Loading route map…" />
+        ) : (
+          <RouteComparePanel
+            routes={panelRoutes}
+            segments={hasGeoRoutes ? [] : useMockFallback ? SEGMENTS : []}
+            compareIds={compareIds}
+            kinds={kinds}
+          />
+        )}
       </section>
 
       <section className="space-y-4">
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-          <MiniStat
-            label="Active routes"
-            value={String(useGraphQlLeaderboard ? leaderboardAgg.routeCount : ROUTES.length)}
-            hint={useGraphQlLeaderboard ? "Live mart" : "Mumbai MMR"}
-          />
-          <MiniStat
-            label="Hardest"
-            value={useGraphQlLeaderboard ? `R-${(hardest as RouteLeaderboardRow).route_code}` : (hardest as typeof ROUTES[number]).route_code}
-            tone="destructive"
-            name={hardest.route_name}
-            hint={`${fmt(useGraphQlLeaderboard ? (hardest as RouteLeaderboardRow).peak_difficulty_score : (hardest as typeof ROUTES[number]).difficulty_score)} difficulty`}
-          />
-          <MiniStat
-            label="Easiest"
-            value={useGraphQlLeaderboard ? `R-${(easiest as RouteLeaderboardRow).route_code}` : (easiest as typeof ROUTES[number]).route_code}
-            tone="success"
-            name={easiest.route_name}
-            hint={`${fmt(useGraphQlLeaderboard ? (easiest as RouteLeaderboardRow).peak_difficulty_score : (easiest as typeof ROUTES[number]).difficulty_score)} difficulty`}
-          />
-          <MiniStat label="Avg efficiency" value={fmt(avgEff, 2)} unit="kWh/km" hint="Trip-weighted" />
-          <MiniStat label="Avg congestion" value={fmt(avgCong)} unit="/100" hint="Trip-weighted" />
-          <MiniStat label="Avg difficulty" value={fmt(avgDiff)} unit="/100" hint="Trip-weighted" />
-        </div>
+        {isPageLoading ? (
+          <>
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <MiniStatSkeleton key={`stat-skel-${i}`} />
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <MiniStatSkeleton key={`stat-skel-ext-${i}`} />
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
+              <MiniStat
+                label="Active routes"
+                value={String(useGraphQlLeaderboard ? leaderboardAgg.routeCount : ROUTES.length)}
+                hint={useGraphQlLeaderboard ? "Live mart" : "Mumbai MMR"}
+              />
+              <MiniStat
+                label="Hardest"
+                value={useGraphQlLeaderboard ? `R-${(hardest as RouteLeaderboardRow).route_code}` : (hardest as typeof ROUTES[number]).route_code}
+                tone="destructive"
+                name={hardest.route_name}
+                hint={`${fmt(useGraphQlLeaderboard ? (hardest as RouteLeaderboardRow).peak_difficulty_score : (hardest as typeof ROUTES[number]).difficulty_score)} difficulty`}
+              />
+              <MiniStat
+                label="Easiest"
+                value={useGraphQlLeaderboard ? `R-${(easiest as RouteLeaderboardRow).route_code}` : (easiest as typeof ROUTES[number]).route_code}
+                tone="success"
+                name={easiest.route_name}
+                hint={`${fmt(useGraphQlLeaderboard ? (easiest as RouteLeaderboardRow).peak_difficulty_score : (easiest as typeof ROUTES[number]).difficulty_score)} difficulty`}
+              />
+              <MiniStat label="Avg efficiency" value={fmt(avgEff, 2)} unit="kWh/km" hint="Trip-weighted" />
+              <MiniStat label="Avg congestion" value={fmt(avgCong)} unit="/100" hint="Trip-weighted" />
+              <MiniStat label="Avg difficulty" value={fmt(avgDiff)} unit="/100" hint="Trip-weighted" />
+            </div>
 
-        {useGraphQlLeaderboard && (
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <MiniStat
-              label="Total trips"
-              value={leaderboardAgg.totalTrips.toLocaleString()}
-              hint="Across ranked routes"
-            />
-            <MiniStat
-              label="Energy leakage"
-              value={fmt(leaderboardAgg.totalLeakageKwh, 0)}
-              unit="kWh"
-              hint="30-day window"
-              tone="warning"
-            />
-            <MiniStat
-              label="High-risk routes"
-              value={String(leaderboardAgg.highRiskRoutes)}
-              hint="Difficulty ≥ 40"
-              tone="destructive"
-            />
-            <MiniStat
-              label="Avg peak delta"
-              value={fmt(leaderboardAgg.avgPeakDeltaPct, 1)}
-              unit="%"
-              hint="Peak vs base kWh/km"
-            />
-          </div>
+            {useGraphQlLeaderboard && (
+              <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                <MiniStat
+                  label="Total trips"
+                  value={leaderboardAgg.totalTrips.toLocaleString()}
+                  hint="Across ranked routes"
+                />
+                <MiniStat
+                  label="Energy leakage"
+                  value={fmt(leaderboardAgg.totalLeakageKwh, 0)}
+                  unit="kWh"
+                  hint="30-day window"
+                  tone="warning"
+                />
+                <MiniStat
+                  label="High-risk routes"
+                  value={String(leaderboardAgg.highRiskRoutes)}
+                  hint="Difficulty ≥ 40"
+                  tone="destructive"
+                />
+                <MiniStat
+                  label="Avg peak delta"
+                  value={fmt(leaderboardAgg.avgPeakDeltaPct, 1)}
+                  unit="%"
+                  hint="Peak vs base kWh/km"
+                />
+              </div>
+            )}
+          </>
         )}
 
         <div className="flex items-end justify-between">
@@ -728,7 +778,7 @@ function RouteIntelligencePage() {
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {leaderboardLoading && !useGraphQlLeaderboard
+          {isPageLoading
             ? Array.from({ length: 8 }).map((_, i) => (
                 <div key={`lb-skel-${i}`} className="h-44 animate-pulse rounded-2xl border border-border/60 bg-muted/30" />
               ))
@@ -741,14 +791,20 @@ function RouteIntelligencePage() {
                     onSelect={() => selectLeaderboardRoute(r)}
                   />
                 ))
-              : sortedMock.map((r) => (
-                  <RouteCard
-                    key={r.route_id}
-                    r={r}
-                    slot={slotFor(r.route_id)}
-                    onSelect={() => selectRoute(r.route_id)}
-                  />
-                ))}
+              : useMockFallback
+                ? sortedMock.map((r) => (
+                    <RouteCard
+                      key={r.route_id}
+                      r={r}
+                      slot={slotFor(r.route_id)}
+                      onSelect={() => selectRoute(r.route_id)}
+                    />
+                  ))
+                : (
+                  <div className="col-span-full flex h-40 items-center justify-center rounded-2xl border border-border/60 bg-muted/15 text-[12.5px] text-muted-foreground">
+                    No route leaderboard data available.
+                  </div>
+                )}
         </div>
       </section>
 

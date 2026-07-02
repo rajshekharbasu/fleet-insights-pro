@@ -483,6 +483,7 @@ export function RouteComparePanel({
           activeKinds={kinds}
           height={480}
           showFleetBadge
+          showEndpoints
           dmsMode="summary"
           fitTrigger={`${mapFitTrigger}|overview`}
         />

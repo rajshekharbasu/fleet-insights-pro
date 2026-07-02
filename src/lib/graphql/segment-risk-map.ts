@@ -277,6 +277,96 @@ export async function fetchTopDangerousSegments(
   return dedupeBySegment(rows).slice(0, Math.max(1, Math.trunc(topN)));
 }
 
+/** Trend labels that indicate risk is increasing (higher score = worse). */
+const WORSENING_TRENDS = ["up", "worsening", "increasing", "rising"] as const;
+
+/** Trend labels that indicate risk is decreasing (lower score = better). */
+const IMPROVING_TRENDS = ["down", "improving", "decreasing", "falling"] as const;
+
+export type SegmentTrendMode = "improving" | "worsening";
+
+function sqlTrendList(trends: readonly string[]): string {
+  return trends.map((t) => `lower(${sqlStr(t)})`).join(", ");
+}
+
+function buildTrendWhereClause(mode: SegmentTrendMode, filters?: SegmentRiskMapFilters): string {
+  const conds: string[] = [];
+  const filterWhere = buildWhereClause(filters);
+  if (filterWhere) conds.push(filterWhere.replace(/^WHERE\s+/i, ""));
+
+  if (mode === "worsening") {
+    conds.push(
+      `(lower(trend_direction) IN (${sqlTrendList(WORSENING_TRENDS)}) OR difficulty_change_pct > 0)`,
+    );
+  } else {
+    conds.push(
+      `(lower(trend_direction) IN (${sqlTrendList(IMPROVING_TRENDS)}) OR difficulty_change_pct < 0)`,
+    );
+  }
+
+  return `WHERE ${conds.join(" AND ")}`;
+}
+
+function sortTrendRows(rows: SegmentRiskMapRow[], mode: SegmentTrendMode): SegmentRiskMapRow[] {
+  return [...rows].sort((a, b) => {
+    const aPct = a.difficulty_change_pct;
+    const bPct = b.difficulty_change_pct;
+    if (aPct !== null && bPct !== null && aPct !== bPct) {
+      return mode === "worsening" ? bPct - aPct : aPct - bPct;
+    }
+    if (aPct !== null && bPct === null) return -1;
+    if (aPct === null && bPct !== null) return 1;
+    return mode === "worsening"
+      ? b.segment_difficulty_score - a.segment_difficulty_score
+      : a.segment_difficulty_score - b.segment_difficulty_score;
+  });
+}
+
+/**
+ * Fetches segments whose risk is trending up or down. Matches rows where
+ * `trend_direction` is a known improving/worsening label **or** period-over-period
+ * `difficulty_change_pct` moved in that direction. Deduped per segment, then
+ * sorted by largest change (or current score when pct is null).
+ */
+async function fetchTrendingSegments(
+  mode: SegmentTrendMode,
+  filters?: SegmentRiskMapFilters,
+  topN = 6,
+): Promise<SegmentRiskMapRow[]> {
+  const where = buildTrendWhereClause(mode, filters);
+  const overFetch = Math.max(500, topN * 60);
+  const order =
+    mode === "worsening"
+      ? "difficulty_change_pct DESC NULLS LAST, segment_difficulty_score DESC"
+      : "difficulty_change_pct ASC NULLS LAST, segment_difficulty_score ASC";
+  const sql = `
+    SELECT ${SEGMENT_RISK_COLS}
+    FROM mart_segment_risk_map
+    ${where}
+    ORDER BY ${order}
+    LIMIT ${overFetch}
+  `;
+  const opName = mode === "worsening" ? "GetWorseningSegments" : "GetImprovingSegments";
+  const rows = await runSql<Record<string, unknown>>(sql, opName);
+  return sortTrendRows(dedupeBySegment(rows), mode).slice(0, Math.max(1, Math.trunc(topN)));
+}
+
+/** Segments with worsening trend or positive difficulty change. */
+export function fetchWorseningSegments(
+  filters?: SegmentRiskMapFilters,
+  topN = 6,
+): Promise<SegmentRiskMapRow[]> {
+  return fetchTrendingSegments("worsening", filters, topN);
+}
+
+/** Segments with improving trend or negative difficulty change. */
+export function fetchImprovingSegments(
+  filters?: SegmentRiskMapFilters,
+  topN = 6,
+): Promise<SegmentRiskMapRow[]> {
+  return fetchTrendingSegments("improving", filters, topN);
+}
+
 export interface SegmentRiskRouteOption {
   route_id: number;
   route_code: string;

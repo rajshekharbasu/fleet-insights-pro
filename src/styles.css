@@ -366,6 +366,11 @@
   background: var(--color-surface);
 }
 
+.route-endpoint-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
 .leaflet-popup-content-wrapper,
 .leaflet-popup-tip {
   background: var(--color-popover);

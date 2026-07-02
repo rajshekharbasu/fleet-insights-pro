@@ -345,3 +345,33 @@ export const COMPARE_ACCENT = {
   A: { color: "#2dd4bf", label: "Route A" },
   B: { color: "#c084fc", label: "Route B" },
 } as const;
+
+export const ROUTE_PALETTE = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+] as const;
+
+/** Stable hash so the same route_id always maps to the same palette slot. */
+function hashRouteId(routeId: string): number {
+  let h = 0;
+  for (let i = 0; i < routeId.length; i++) {
+    h = (Math.imul(31, h) + routeId.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+/**
+ * Deterministic color per route — cycles chart tokens, then evenly-spaced oklch
+ * hues for additional routes (mirrors depotColor in battery-cycles.ts).
+ */
+export function routeColor(routeId: string): string {
+  const i = hashRouteId(routeId);
+  const slot = i % ROUTE_PALETTE.length;
+  const cycle = Math.floor(i / ROUTE_PALETTE.length);
+  if (cycle === 0) return ROUTE_PALETTE[slot];
+  const hue = (195 + (cycle - 1) * 47 + slot * 23) % 360;
+  return `oklch(0.62 0.16 ${hue})`;
+}

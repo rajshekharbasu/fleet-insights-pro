@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Award, BadgeCheck, Brain, Crown, FileSpreadsheet, GraduationCap, Loader2, ShieldAlert, Star,
+  Award, BadgeCheck, Brain, ChevronRight, Crown, FileSpreadsheet, GraduationCap, Loader2, Maximize2, ShieldAlert, Star,
   TrendingDown, TrendingUp, X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -13,11 +13,29 @@ import {
 import { PageShell } from "@/components/layout/AppNav";
 import { InsightCard } from "@/components/dashboard/InsightCard";
 import { FilterBar } from "@/components/dashboard/FilterBar";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 import { DRIVERS, type DriverScore } from "@/lib/fleet-data";
 import { fetchDriverLeaderboard, type DriverLeaderboardExtras, type DriverLeaderboardEntry } from "@/lib/graphql/drivers";
+import {
+  computeTripBehaviorWindow,
+  fetchDriverTripBehavior,
+  fetchDriverTripDetails,
+  fetchDriverTripsForDay,
+  resolveDriverTripBehaviorAnchor,
+  TRIP_BEHAVIOR_WINDOW_DAYS,
+  type DriverDailyTripRow,
+  type DriverTripDetailRow,
+} from "@/lib/graphql/driver-trip-behavior";
 import { fetchFilterOptions } from "@/lib/graphql/filter-options";
 import { DEFAULT_FILTERS, type Filters } from "@/lib/analytics";
 import { exportDriverWorkbook } from "@/lib/export/driver-excel";
+import { exportDriverTrips } from "@/lib/export/driver-daily-excel";
 
 export const Route = createFileRoute("/drivers")({
   head: () => ({
@@ -589,17 +607,746 @@ function DriverIntelligencePage() {
         />
       </section>
 
-      {open && <DriverDrawer d={open} extras={extrasById.get(open.driver_id)} onClose={() => setOpen(null)} />}
+      {open && (
+        <DriverDrawer
+          d={open}
+          extras={extrasById.get(open.driver_id)}
+          usingLive={usingLive}
+          onClose={() => setOpen(null)}
+        />
+      )}
     </PageShell>
   );
 }
 
-function DriverDrawer({ d, extras, onClose }: { d: DriverScore; extras?: DriverLeaderboardExtras; onClose: () => void }) {
+function formatTripDate(iso: string): string {
+  const [y, m, day] = iso.split("-");
+  if (!y || !m || !day) return iso;
+  const dt = new Date(Number(y), Number(m) - 1, Number(day));
+  return dt.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+}
+
+function formatTripTime(raw: string | null): string {
+  if (!raw) return "—";
+  const clock = raw.match(/(\d{1,2}):(\d{2})/);
+  if (clock && raw.length <= 12) {
+    const h = clock[1].padStart(2, "0");
+    return `${h}:${clock[2]}`;
+  }
+  const dt = new Date(raw);
+  if (!Number.isNaN(dt.getTime())) {
+    return dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+  }
+  return raw.slice(0, 5);
+}
+
+function tripRouteLabel(t: DriverTripDetailRow): string {
+  return t.routeName ?? "—";
+}
+
+function tripVehicleLabel(t: DriverTripDetailRow): string {
+  return t.vehicleNumber ?? t.busCode ?? "—";
+}
+
+function isHighRiskTrip(t: DriverTripDetailRow): boolean {
+  return (t.behaviorRiskFlag ?? "").toUpperCase() === "HIGH";
+}
+
+function formatWindowSubtitle(from: string, to: string, dayCount: number, tripCount: number): string {
+  const part = (iso: string, withYear: boolean) => {
+    const [y, mo, d] = iso.split("-");
+    const dt = new Date(Number(y), Number(mo) - 1, Number(d));
+    return dt.toLocaleDateString(undefined, {
+      day: "numeric",
+      month: "short",
+      ...(withYear ? { year: "numeric" } : {}),
+    });
+  };
+  const range =
+    from.slice(0, 4) === to.slice(0, 4)
+      ? `${part(from, false)} – ${part(to, true)}`
+      : `${part(from, true)} – ${part(to, true)}`;
+  return `${range} · ${dayCount} days · ${tripCount} trips`;
+}
+
+function effHeatClass(value: number, windowAvg: number): string {
+  if (windowAvg <= 0 || value <= 0) return "";
+  const ratio = value / windowAvg;
+  if (ratio <= 0.95) return "bg-success/12 text-success font-medium";
+  if (ratio >= 1.05) return "bg-warning/12 text-warning font-medium";
+  return "";
+}
+
+const INLINE_PREVIEW_DAYS = 10;
+
+const tripTableHead = (compact: boolean, align: "text-left" | "text-right" = "text-left") =>
+  cn(
+    "whitespace-nowrap align-middle font-semibold uppercase tracking-wider text-muted-foreground",
+    compact ? "h-8 px-2.5 text-[9.5px]" : "h-9 px-3 text-[10px]",
+    align,
+  );
+
+const tripTableCell = (compact: boolean, align: "text-left" | "text-right" = "text-left", extra?: string) =>
+  cn(
+    "align-middle",
+    compact ? "px-2.5 py-2" : "px-3 py-2.5",
+    align,
+    extra,
+  );
+
+type DailyTripCol = {
+  key: string;
+  head: string;
+  title: string;
+  align: "text-left" | "text-right";
+  cell: (r: DriverDailyTripRow, ctx: { windowAvgEff: number }) => ReactNode;
+  cellClass?: (r: DriverDailyTripRow, ctx: { windowAvgEff: number }) => string;
+};
+
+const DAILY_TRIP_COLS: DailyTripCol[] = [
+  {
+    key: "date",
+    head: "Date",
+    title: "Scheduling date",
+    align: "text-left",
+    cell: (r) => <span className="whitespace-nowrap">{formatTripDate(r.schedulingDate)}</span>,
+  },
+  {
+    key: "trips",
+    head: "Trips",
+    title: "Trip count",
+    align: "text-right",
+    cell: (r) => <span className="num tabular-nums">{r.tripCount}</span>,
+  },
+  {
+    key: "dist",
+    head: "Distance",
+    title: "Total distance (km)",
+    align: "text-right",
+    cell: (r) => <span className="num tabular-nums">{fmt(r.totalDistanceKm, 0)}</span>,
+  },
+  {
+    key: "eff",
+    head: "Eff.",
+    title: "Avg efficiency (kWh/km)",
+    align: "text-right",
+    cell: (r, ctx) => (
+      <span className={`num tabular-nums rounded px-1 ${effHeatClass(r.avgEfficiencyKwhPerKm, ctx.windowAvgEff)}`}>
+        {fmt(r.avgEfficiencyKwhPerKm, 2)}
+      </span>
+    ),
+  },
+  {
+    key: "exp",
+    head: "Exposure",
+    title: "Avg route difficulty score",
+    align: "text-right",
+    cell: (r) => <span className="num tabular-nums">{fmt(r.avgRouteDifficulty, 0)}</span>,
+  },
+  {
+    key: "dms",
+    head: "DMS",
+    title: "Total DMS events",
+    align: "text-right",
+    cell: (r) => <span className="num tabular-nums">{r.dmsEvents}</span>,
+  },
+  {
+    key: "brake",
+    head: "Braking",
+    title: "Hard braking density /100 km",
+    align: "text-right",
+    cell: (r) => <span className="num tabular-nums">{fmt(r.avgBrakingDensity, 1)}</span>,
+  },
+  {
+    key: "speed",
+    head: "Overspeed",
+    title: "Overspeed density /100 km",
+    align: "text-right",
+    cell: (r) => <span className="num tabular-nums">{fmt(r.avgOverspeedDensity, 1)}</span>,
+  },
+  {
+    key: "distraction",
+    head: "Distract.",
+    title: "Distraction density /100 km",
+    align: "text-right",
+    cell: (r) => <span className="num tabular-nums">{fmt(r.avgDistractionDensity, 1)}</span>,
+  },
+  {
+    key: "fatigue",
+    head: "Fatigue",
+    title: "Fatigue density /100 km",
+    align: "text-right",
+    cell: (r) => <span className="num tabular-nums">{fmt(r.avgFatigueDensity, 1)}</span>,
+  },
+  {
+    key: "stars",
+    head: "Stars",
+    title: "Driver star events (positive behavior)",
+    align: "text-right",
+    cell: (r) => (
+      <span className={`num tabular-nums ${r.driverStars > 0 ? "font-medium text-success" : ""}`}>
+        {r.driverStars}
+      </span>
+    ),
+  },
+  {
+    key: "hr",
+    head: "High-risk",
+    title: "Trips flagged HIGH behavior risk",
+    align: "text-right",
+    cell: (r) => (
+      <span className={`num tabular-nums ${r.highRiskTrips > 0 ? "font-semibold text-destructive" : ""}`}>
+        {r.highRiskTrips}
+      </span>
+    ),
+    cellClass: (r) => (r.highRiskTrips > 0 ? "bg-destructive/8" : ""),
+  },
+];
+
+type TripDetailCol = {
+  key: string;
+  head: string;
+  title: string;
+  align: "text-left" | "text-right";
+  cell: (t: DriverTripDetailRow, ctx: { windowAvgEff: number }) => ReactNode;
+  cellClass?: (t: DriverTripDetailRow, ctx: { windowAvgEff: number }) => string;
+};
+
+const TRIP_DETAIL_COLS: TripDetailCol[] = [
+  {
+    key: "route",
+    head: "Route",
+    title: "Route name",
+    align: "text-left",
+    cell: (t) => <span className="whitespace-nowrap">{tripRouteLabel(t)}</span>,
+  },
+  {
+    key: "routeCode",
+    head: "Route code",
+    title: "route_code",
+    align: "text-left",
+    cell: (t) => <span className="whitespace-nowrap font-mono text-[0.95em]">{t.routeCode ?? "—"}</span>,
+  },
+  {
+    key: "timeBucket",
+    head: "Time bucket",
+    title: "time_bucket",
+    align: "text-left",
+    cell: (t) => <span className="whitespace-nowrap">{t.timeBucket ?? "—"}</span>,
+  },
+  {
+    key: "vehicleSize",
+    head: "Vehicle size",
+    title: "vehicle_size",
+    align: "text-left",
+    cell: (t) => <span className="whitespace-nowrap">{t.vehicleSize ?? "—"}</span>,
+  },
+  {
+    key: "vehicle",
+    head: "Vehicle",
+    title: "Vehicle number or bus code",
+    align: "text-left",
+    cell: (t) => <span className="whitespace-nowrap">{tripVehicleLabel(t)}</span>,
+  },
+  {
+    key: "start",
+    head: "Sched. start",
+    title: "trip_start_time",
+    align: "text-right",
+    cell: (t) => <span className="num tabular-nums">{formatTripTime(t.tripStartTime)}</span>,
+  },
+  {
+    key: "end",
+    head: "Sched. end",
+    title: "trip_end_time",
+    align: "text-right",
+    cell: (t) => <span className="num tabular-nums">{formatTripTime(t.tripEndTime)}</span>,
+  },
+  {
+    key: "actualStart",
+    head: "Actual start",
+    title: "actual_trip_start_time",
+    align: "text-right",
+    cell: (t) => <span className="num tabular-nums">{formatTripTime(t.actualTripStartTime)}</span>,
+  },
+  {
+    key: "actualEnd",
+    head: "Actual end",
+    title: "actual_trip_end_time",
+    align: "text-right",
+    cell: (t) => <span className="num tabular-nums">{formatTripTime(t.actualTripEndTime)}</span>,
+  },
+  {
+    key: "actualDur",
+    head: "Actual dur.",
+    title: "actual_trip_duration_min",
+    align: "text-right",
+    cell: (t) => (
+      <span className="num tabular-nums">
+        {t.actualTripDurationMin != null && t.actualTripDurationMin > 0 ? `${fmt(t.actualTripDurationMin, 0)}m` : "—"}
+      </span>
+    ),
+  },
+  {
+    key: "actualDist",
+    head: "Actual dist.",
+    title: "distance_km_odo_trip",
+    align: "text-right",
+    cell: (t) => <span className="num tabular-nums">{fmt(t.actualDistanceKm, 1)}</span>,
+  },
+  {
+    key: "eff",
+    head: "Eff.",
+    title: "Efficiency (kWh/km)",
+    align: "text-right",
+    cell: (t, ctx) => (
+      <span className={`num tabular-nums rounded px-1 ${effHeatClass(t.kwhPerKm, ctx.windowAvgEff)}`}>
+        {fmt(t.kwhPerKm, 2)}
+      </span>
+    ),
+  },
+  {
+    key: "exp",
+    head: "Difficulty",
+    title: "route_difficulty_score",
+    align: "text-right",
+    cell: (t) => <span className="num tabular-nums">{fmt(t.routeDifficultyScore, 1)}</span>,
+  },
+  {
+    key: "dms",
+    head: "DMS",
+    title: "Total DMS events",
+    align: "text-right",
+    cell: (t) => <span className="num tabular-nums">{t.totalDmsEvents}</span>,
+  },
+  {
+    key: "brake",
+    head: "Braking",
+    title: "Hard braking density /100 km",
+    align: "text-right",
+    cell: (t) => <span className="num tabular-nums">{fmt(t.hardBrakingDensity, 1)}</span>,
+  },
+  {
+    key: "speed",
+    head: "Overspeed",
+    title: "Overspeed density /100 km",
+    align: "text-right",
+    cell: (t) => <span className="num tabular-nums">{fmt(t.overspeedDensity, 1)}</span>,
+  },
+  {
+    key: "distraction",
+    head: "Distract.",
+    title: "Distraction density /100 km",
+    align: "text-right",
+    cell: (t) => <span className="num tabular-nums">{fmt(t.distractionDensity, 1)}</span>,
+  },
+  {
+    key: "fatigue",
+    head: "Fatigue",
+    title: "Fatigue density /100 km",
+    align: "text-right",
+    cell: (t) => <span className="num tabular-nums">{fmt(t.fatigueDensity, 1)}</span>,
+  },
+  {
+    key: "stars",
+    head: "Stars",
+    title: "Driver star events",
+    align: "text-right",
+    cell: (t) => (
+      <span className={`num tabular-nums ${t.driverStarCount > 0 ? "font-medium text-success" : ""}`}>
+        {t.driverStarCount}
+      </span>
+    ),
+  },
+  {
+    key: "risk",
+    head: "Risk",
+    title: "Behavior risk flag",
+    align: "text-right",
+    cell: (t) => (
+      <span className={`num tabular-nums uppercase ${isHighRiskTrip(t) ? "font-semibold text-destructive" : "text-muted-foreground"}`}>
+        {t.behaviorRiskFlag ?? "—"}
+      </span>
+    ),
+    cellClass: (t) => (isHighRiskTrip(t) ? "bg-destructive/8" : ""),
+  },
+];
+
+function DriverDayTripDetails({
+  driverId,
+  schedulingDate,
+  windowAvgEff,
+  textSize,
+  compact,
+}: {
+  driverId: string;
+  schedulingDate: string;
+  windowAvgEff: number;
+  textSize: string;
+  compact: boolean;
+}) {
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["driver_trip_behavior_day", driverId, schedulingDate],
+    queryFn: () => fetchDriverTripsForDay(driverId, schedulingDate),
+    staleTime: 60_000,
+  });
+  const ctx = { windowAvgEff };
+
+  const panel = (content: ReactNode) => (
+    <div className="mx-2 my-2 overflow-hidden rounded-xl border border-primary/15 bg-linear-to-br from-muted/25 via-card to-card shadow-sm ring-1 ring-border/50 sm:mx-3">
+      <div className="flex items-center gap-2 border-b border-border/50 bg-primary/5 px-3 py-2 sm:px-4">
+        <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-hidden />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground/85">
+          Trip detail · {formatTripDate(schedulingDate)}
+        </span>
+        {data?.length != null && !isLoading && !isError && (
+          <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+            {data.length} {data.length === 1 ? "trip" : "trips"}
+          </span>
+        )}
+      </div>
+      <div className="overflow-x-auto">{content}</div>
+    </div>
+  );
+
+  if (isLoading) {
+    return panel(
+      <div className={cn("flex items-center justify-center gap-2 py-8", textSize, "text-muted-foreground")}>
+        <Loader2 className="size-4 animate-spin text-primary" />
+        Loading trips…
+      </div>,
+    );
+  }
+  if (isError) {
+    return panel(
+      <div className={cn("px-4 py-8 text-center", textSize, "text-destructive")}>
+        {error instanceof Error ? error.message : "Failed to load trip details."}
+      </div>,
+    );
+  }
+  if (!data?.length) {
+    return panel(
+      <div className={cn("px-4 py-8 text-center", textSize, "text-muted-foreground")}>
+        No trips for this day.
+      </div>,
+    );
+  }
+
+  return panel(
+    <table className={cn("w-full min-w-[1120px] caption-bottom", textSize)}>
+      <TableHeader className="bg-muted/30 [&_tr]:border-b [&_tr]:border-border/50">
+        <TableRow className="border-0 hover:bg-transparent">
+          {TRIP_DETAIL_COLS.map((c) => (
+            <TableHead key={c.key} title={c.title} className={tripTableHead(compact, c.align)}>
+              {c.head}
+            </TableHead>
+          ))}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {data.map((t) => (
+          <TableRow
+            key={t.tripId || `${schedulingDate}-${t.tripStartTime}`}
+            className={cn(
+              "border-border/40 transition-colors",
+              isHighRiskTrip(t) ? "bg-destructive/5 hover:bg-destructive/8" : "hover:bg-muted/35",
+            )}
+          >
+            {TRIP_DETAIL_COLS.map((c) => (
+              <TableCell
+                key={c.key}
+                className={tripTableCell(compact, c.align, c.cellClass?.(t, ctx))}
+              >
+                {c.cell(t, ctx)}
+              </TableCell>
+            ))}
+          </TableRow>
+        ))}
+      </TableBody>
+    </table>,
+  );
+}
+
+function DriverDailyTripsTable({
+  driverId,
+  rows,
+  expandedDate,
+  onToggleDate,
+  minWidth = "min-w-[880px]",
+  textSize = "text-[11px]",
+  compact = false,
+}: {
+  driverId: string;
+  rows: DriverDailyTripRow[];
+  expandedDate: string | null;
+  onToggleDate: (schedulingDate: string) => void;
+  minWidth?: string;
+  textSize?: string;
+  compact?: boolean;
+}) {
+  const windowAvgEff =
+    rows.length > 0
+      ? rows.reduce((s, r) => s + r.avgEfficiencyKwhPerKm * r.tripCount, 0)
+        / Math.max(1, rows.reduce((s, r) => s + r.tripCount, 0))
+      : 0;
+  const ctx = { windowAvgEff };
+
+  return (
+    <table className={cn("w-full caption-bottom", minWidth, textSize)}>
+      <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur-sm [&_tr]:border-b [&_tr]:border-border/60">
+        <TableRow className="border-0 hover:bg-transparent">
+          <TableHead className={cn(tripTableHead(compact), "w-9")} aria-label="Expand" />
+          {DAILY_TRIP_COLS.map((c) => (
+            <TableHead key={c.key} title={c.title} className={tripTableHead(compact, c.align)}>
+              {c.head}
+            </TableHead>
+          ))}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((r) => {
+          const open = expandedDate === r.schedulingDate;
+          return (
+            <Fragment key={r.schedulingDate}>
+              <TableRow
+                role="button"
+                tabIndex={0}
+                data-state={open ? "selected" : undefined}
+                onClick={() => onToggleDate(r.schedulingDate)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onToggleDate(r.schedulingDate);
+                  }
+                }}
+                className={cn(
+                  "cursor-pointer border-border/40 transition-colors",
+                  open
+                    ? "border-l-2 border-l-primary bg-primary/6 hover:bg-primary/8"
+                    : "hover:bg-muted/40",
+                )}
+              >
+                <TableCell className={tripTableCell(compact)}>
+                  <ChevronRight
+                    className={cn(
+                      "size-4 text-muted-foreground transition-transform duration-200",
+                      open && "rotate-90 text-primary",
+                    )}
+                  />
+                </TableCell>
+                {DAILY_TRIP_COLS.map((c) => (
+                  <TableCell
+                    key={c.key}
+                    className={tripTableCell(compact, c.align, c.cellClass?.(r, ctx))}
+                  >
+                    {c.cell(r, ctx)}
+                  </TableCell>
+                ))}
+              </TableRow>
+              {open && (
+                <TableRow className="border-0 hover:bg-transparent">
+                  <TableCell colSpan={DAILY_TRIP_COLS.length + 1} className="p-0">
+                    <DriverDayTripDetails
+                      driverId={driverId}
+                      schedulingDate={r.schedulingDate}
+                      windowAvgEff={windowAvgEff}
+                      textSize={textSize}
+                      compact={compact}
+                    />
+                  </TableCell>
+                </TableRow>
+              )}
+            </Fragment>
+          );
+        })}
+      </TableBody>
+    </table>
+  );
+}
+
+function DriverDailyTripsSection({
+  driverId,
+  driverName,
+  enabled,
+  extras,
+}: {
+  driverId: string;
+  driverName: string;
+  enabled: boolean;
+  extras?: DriverLeaderboardExtras;
+}) {
+  const [exporting, setExporting] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [expandedDate, setExpandedDate] = useState<string | null>(null);
+
+  const toggleDate = (schedulingDate: string) =>
+    setExpandedDate((prev) => (prev === schedulingDate ? null : schedulingDate));
+
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: [
+      "driver_trip_behavior_fact",
+      driverId,
+      extras?.windowEndDate,
+      extras?.snapshotDate,
+    ],
+    queryFn: async () => {
+      const anchorDate = await resolveDriverTripBehaviorAnchor(driverId, extras);
+      const window = computeTripBehaviorWindow(anchorDate);
+      const rows = await fetchDriverTripBehavior(driverId, TRIP_BEHAVIOR_WINDOW_DAYS + 1, window);
+      return { rows, anchorDate, window };
+    },
+    enabled,
+    staleTime: 60_000,
+  });
+
+  const rows = data?.rows ?? [];
+  const window = data?.window;
+  const previewRows = rows.length > INLINE_PREVIEW_DAYS ? rows.slice(-INLINE_PREVIEW_DAYS) : rows;
+  const totalTrips = rows.reduce((s, r) => s + r.tripCount, 0);
+  const windowSubtitle = window ? formatWindowSubtitle(window.fromDate, window.toDate, rows.length, totalTrips) : null;
+  const modalTitle = `${driverName} — Daily trip behavior — last ${TRIP_BEHAVIOR_WINDOW_DAYS} days`;
+
+  async function handleExport() {
+    if (exporting || rows.length === 0 || !window) return;
+    setExporting(true);
+    try {
+      const tripRows = await fetchDriverTripDetails(driverId, window);
+      const dateSpan = `${window.fromDate} → ${window.toDate}`;
+      await exportDriverTrips(driverName, tripRows, { dailySummary: rows, dateSpan });
+      toast.success(`Exported ${tripRows.length} trips (${rows.length} days) to Excel.`);
+    } catch (err) {
+      console.error("Trip export failed", err);
+      toast.error("Trip export failed.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const headerActions = rows.length > 0 && (
+    <div className="flex items-center gap-1.5">
+      <button
+        type="button"
+        onClick={() => setExpanded(true)}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-muted/20 px-2 py-1 text-[10.5px] font-medium text-foreground transition-colors hover:bg-muted/40"
+        title="Expand daily trips"
+      >
+        <Maximize2 className="h-3 w-3" />
+        Expand
+      </button>
+      <button
+        type="button"
+        onClick={() => handleExport()}
+        disabled={exporting}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-muted/20 px-2 py-1 text-[10.5px] font-medium text-foreground transition-colors hover:bg-muted/40 disabled:opacity-60"
+      >
+        {exporting ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileSpreadsheet className="h-3 w-3" />}
+        Export trips
+      </button>
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div>
+          <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Daily trip behavior</div>
+          {windowSubtitle && (
+            <div className="mt-0.5 text-[10.5px] text-muted-foreground/90">{windowSubtitle}</div>
+          )}
+        </div>
+        {headerActions}
+      </div>
+      <div className="overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm">
+        {isLoading ? (
+          <div className="flex items-center justify-center gap-2 py-12 text-[12px] text-muted-foreground">
+            <Loader2 className="size-4 animate-spin text-primary" /> Loading daily trips…
+          </div>
+        ) : isError ? (
+          <div className="px-4 py-8 text-center text-[12px] text-destructive">
+            {error instanceof Error ? error.message : "Failed to load daily trip data."}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="px-4 py-8 text-center text-[12px] text-muted-foreground">
+            No daily trip data for this driver in the last {TRIP_BEHAVIOR_WINDOW_DAYS} days.
+          </div>
+        ) : (
+          <div className="max-h-52 overflow-x-auto overflow-y-auto">
+            <DriverDailyTripsTable
+              driverId={driverId}
+              rows={previewRows}
+              expandedDate={expandedDate}
+              onToggleDate={toggleDate}
+              compact
+            />
+          </div>
+        )}
+      </div>
+      {rows.length > 0 && (
+        <p className="mt-1.5 text-[10.5px] text-muted-foreground">
+          {rows.length > INLINE_PREVIEW_DAYS
+            ? `Showing ${previewRows.length} of ${rows.length} days`
+            : `${rows.length} days`}
+          {" · "}
+          {totalTrips} trips · click a day for trip detail · driver_trip_behavior_fact
+        </p>
+      )}
+
+      <Dialog open={expanded} onOpenChange={(open) => { setExpanded(open); if (!open) setExpandedDate(null); }}>
+        <DialogContent className="flex max-h-[92vh] w-[min(98vw,80rem)] max-w-[80rem] flex-col gap-0 overflow-hidden p-0 sm:rounded-xl">
+          <DialogHeader className="shrink-0 border-b border-border/60 px-5 py-4 pr-12 text-left">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <DialogTitle className="text-[15px] font-semibold tracking-tight">{modalTitle}</DialogTitle>
+                {windowSubtitle && (
+                  <p className="mt-1 text-[12px] text-muted-foreground">{windowSubtitle}</p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => handleExport()}
+                disabled={exporting || rows.length === 0}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-muted/20 px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted/40 disabled:opacity-60"
+              >
+                {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
+                Export trips
+              </button>
+            </div>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-5">
+            {rows.length > 0 ? (
+              <div className="overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm">
+                <DriverDailyTripsTable
+                  driverId={driverId}
+                  rows={rows}
+                  expandedDate={expandedDate}
+                  onToggleDate={toggleDate}
+                  minWidth="min-w-[960px]"
+                  textSize="text-[12px]"
+                />
+              </div>
+            ) : (
+              <p className="py-8 text-center text-[12px] text-muted-foreground">No daily trip data.</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function DriverDrawer({
+  d, extras, usingLive, onClose,
+}: {
+  d: DriverScore;
+  extras?: DriverLeaderboardExtras;
+  usingLive: boolean;
+  onClose: () => void;
+}) {
   const evo = d.score_evolution.map((v, i) => ({ wk: `W${i + 1}`, score: v }));
   return (
     <>
       <div className="fixed inset-0 z-40 bg-background/70 backdrop-blur-sm animate-fade-in" onClick={onClose} />
-      <aside className="fixed right-0 top-0 z-50 h-full w-full max-w-lg overflow-y-auto border-l border-border/60 bg-card shadow-elevated animate-slide-in-right">
+      <aside className="fixed right-0 top-0 z-50 h-full w-full max-w-xl overflow-y-auto border-l border-border/60 bg-card shadow-elevated animate-slide-in-right">
         <div className="flex items-center justify-between border-b border-border/60 px-5 py-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-full text-[12px] font-semibold"
@@ -730,6 +1477,14 @@ function DriverDrawer({ d, extras, onClose }: { d: DriverScore; extras?: DriverL
               ))}
             </div>
           </div>
+          {usingLive && (
+            <DriverDailyTripsSection
+              driverId={d.driver_id}
+              driverName={d.driver_name}
+              enabled={usingLive}
+              extras={extras}
+            />
+          )}
         </div>
       </aside>
     </>
