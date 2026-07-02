@@ -81,7 +81,7 @@ function CorrelationMatrix({
         <h3 className="text-[15px] font-semibold tracking-tight">Risk correlation matrix</h3>
         <p className="text-[12.5px] text-muted-foreground">
           {useLiveData
-            ? `Pearson correlation from mart_segment_correlation across ${correlationRow?.route_bucket_count ?? 0} route buckets.`
+            ? `Pearson correlation across ${correlationRow?.route_bucket_count ?? 0} route buckets.`
             : "Pearson correlation between event classes across segments."}
         </p>
         {useLiveData && correlationRow?.note && (
@@ -234,7 +234,7 @@ function LiveSegmentRiskSection() {
             <div>
               <h3 className="text-[15px] font-semibold tracking-tight">Live segment risk map</h3>
               <p className="text-[12.5px] text-muted-foreground">
-                Real lat/lon risk bins from <span className="num">mart_segment_risk_map</span>. Filter by risk band, route and difficulty.
+                Real lat/lon risk bins. Filter by risk band, route and difficulty.
               </p>
             </div>
             <label className="flex cursor-pointer select-none items-center gap-2 rounded-xl border border-border/60 bg-card px-3 py-2 text-[12px]">
@@ -433,7 +433,7 @@ function TopDangerousSegments() {
         <div>
           <h3 className="text-[15px] font-semibold tracking-tight">Top dangerous segments</h3>
           <p className="text-[12.5px] text-muted-foreground">
-            Live from <span className="num">mart_segment_risk_map</span> — distinct segments ranked by difficulty score.
+            Live — distinct segments ranked by difficulty score.
           </p>
         </div>
         <ShieldAlert className="h-4 w-4 text-destructive" />
@@ -661,7 +661,7 @@ function SegmentRiskPage() {
 
   return (
     <PageShell
-      eyebrow="Live · gold.route_segment_fact"
+      eyebrow="Live"
       title="Segment Risk Intelligence"
       description="Spatial operational risk. Surface dangerous corridors, recurring hotspots and correlated event clusters."
     >
