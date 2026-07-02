@@ -3,7 +3,7 @@
  * Kept framework-light (hand-rolled SVG) to match the dashboard's
  * token-driven aesthetic and avoid heavy chart deps.
  */
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 export const fmt = (v: number | null | undefined, dec = 0) =>
@@ -99,16 +99,23 @@ export function Donut({
   centerTop?: string;
   centerSub?: string;
 }) {
+  const [hoveredLabel, setHoveredLabel] = useState<string | null>(null);
   const total = segments.reduce((a, s) => a + s.value, 0) || 1;
   const r = (size - thickness) / 2;
   const c = 2 * Math.PI * r;
   let offset = 0;
+
+  const activeSeg = hoveredLabel ? segments.find((s) => s.label === hoveredLabel) : null;
+  const displayTop = activeSeg ? String(activeSeg.value) : centerTop;
+  const displaySub = activeSeg ? `${activeSeg.label} (${Math.round((activeSeg.value / total) * 100)}%)` : centerSub;
+
   return (
     <div className="relative" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="color-mix(in oklab,var(--muted-foreground) 14%,transparent)" strokeWidth={thickness} />
         {segments.map((s) => {
           const len = (s.value / total) * c;
+          const isHovered = hoveredLabel === s.label;
           const el = (
             <circle
               key={s.label}
@@ -117,20 +124,26 @@ export function Donut({
               r={r}
               fill="none"
               stroke={s.color}
-              strokeWidth={thickness}
+              strokeWidth={isHovered ? thickness + 4 : thickness}
               strokeDasharray={`${len} ${c - len}`}
               strokeDashoffset={-offset}
               strokeLinecap="butt"
+              className="cursor-pointer transition-all duration-200"
+              style={{
+                opacity: hoveredLabel === null || isHovered ? 1 : 0.55,
+              }}
+              onMouseEnter={() => setHoveredLabel(s.label)}
+              onMouseLeave={() => setHoveredLabel(null)}
             />
           );
           offset += len;
           return el;
         })}
       </svg>
-      {(centerTop || centerSub) && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center">
-          {centerTop && <span className="num text-[22px] font-semibold leading-none">{centerTop}</span>}
-          {centerSub && <span className="mt-0.5 text-[10.5px] text-muted-foreground">{centerSub}</span>}
+      {(displayTop || displaySub) && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          {displayTop && <span className="num text-[22px] font-semibold leading-none">{displayTop}</span>}
+          {displaySub && <span className="mt-1 text-[10px] uppercase tracking-wider font-semibold text-muted-foreground text-center px-2">{displaySub}</span>}
         </div>
       )}
     </div>

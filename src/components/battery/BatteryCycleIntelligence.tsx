@@ -69,6 +69,8 @@ import { fmt, Seg, Sparkline } from "./charts";
 import { FleetMixView } from "./FleetMixView";
 import { HealthRiskView } from "./HealthRiskView";
 import { TrendsView } from "./TrendsView";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 
 type Layout = "spotlight" | "grid" | "compact";
 type ViewKey = "overview" | "mix" | "health" | "trends";
@@ -160,21 +162,19 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
   const [layout, setLayout] = useState<Layout>("spotlight");
   const [anchorIdx, setAnchorIdx] = useState(initAnchor);
   const [selKey, setSelKey] = useState<string>(initSel);
-  const [drillDepot, setDrillDepot] = useState<string>(dataset.depots[0] ?? "");
   const [sortKey, setSortKey] = useState<keyof BusRow>("healthScore");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  const [drillMonth, setDrillMonth] = useState<string>(lastMonthName);
   const [band, setBand] = useState<"ALL" | Band>("ALL");
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<Selected | null>(null);
 
-  // Keep the explorer's site in sync with the global company scope.
+  // Reset selected drawer when global company or month changes
   useEffect(() => {
-    if (company !== "ALL") setDrillDepot(company);
     setSelected(null);
-  }, [company]);
+  }, [company, selKey]);
 
   const selMonthName = dataset.mname[selKey] ?? "—";
+  const explorerMonth = selMonthName !== "—" ? selMonthName : lastMonthName;
   const wk = useMemo(() => windowKeys(dataset, anchorIdx), [dataset, anchorIdx]);
   const prev = prevDataKey(dataset, selKey);
   const curAgg = siteAgg(dataset, selKey, company);
@@ -288,7 +288,14 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
   }, [dataset, scopedDepots, wk]);
 
   const drillRows = useMemo(() => {
-    let rows = (dataset.detail[`${drillDepot}|${drillMonth}`] || []).slice();
+    const depotsToQuery = company === "ALL" ? dataset.depots : [company];
+    let rows: BusRow[] = [];
+    depotsToQuery.forEach((dep) => {
+      const r = dataset.detail[`${dep}|${explorerMonth}`] || [];
+      rows.push(...r);
+    });
+    rows = rows.slice();
+
     if (band !== "ALL") rows = rows.filter((r) => r.band === band);
     if (q) {
       const needle = q.toUpperCase();
@@ -302,9 +309,17 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
       return (((av ?? -Infinity) as number) - ((bv ?? -Infinity) as number)) * dir;
     });
     return rows;
-  }, [dataset, drillDepot, drillMonth, band, q, sortKey, sortDir]);
+  }, [dataset, company, explorerMonth, band, q, sortKey, sortDir]);
 
-  const drillAll = dataset.detail[`${drillDepot}|${drillMonth}`] || [];
+  const drillAll = useMemo(() => {
+    const depotsToQuery = company === "ALL" ? dataset.depots : [company];
+    const rows: BusRow[] = [];
+    depotsToQuery.forEach((dep) => {
+      const r = dataset.detail[`${dep}|${explorerMonth}`] || [];
+      rows.push(...r);
+    });
+    return rows;
+  }, [dataset, company, explorerMonth]);
   const drillAvgEfc = (() => {
     const v = drillRows.map((r) => r.efcGross).filter((x): x is number => x != null);
     return v.length ? (v.reduce((a, b) => a + b, 0) / v.length).toFixed(1) : "—";
@@ -408,9 +423,13 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
       </div>
 
       {/* ===== SHARED DRILL DRAWER ===== */}
-      {selected && liveDrill && drawerMonthKey && (
-        <BusDrillDrawer reg={selected.bus.reg} type={selected.bus.type} monthName={selected.monthName} reportMonth={drawerMonthKey} summary={selected.bus} onClose={() => setSelected(null)} />
-      )}
+      <Dialog open={!!(selected && liveDrill && drawerMonthKey)} onOpenChange={(open) => !open && setSelected(null)}>
+        <DialogContent className="max-w-5xl p-0 overflow-hidden border-none bg-transparent shadow-none [&>button]:hidden">
+          {selected && liveDrill && drawerMonthKey && (
+            <BusDrillDrawer reg={selected.bus.reg} type={selected.bus.type} monthName={selected.monthName} reportMonth={drawerMonthKey} summary={selected.bus} onClose={() => setSelected(null)} />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ===== OVERVIEW ===== */}
       {view === "overview" && (
@@ -564,22 +583,34 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
                 ))}
               </div>
             </div>
-            <div className="flex h-44 items-end gap-2 overflow-x-auto pl-1">
-              {efcBars.map((grp) => (
-                <div key={grp.depot} className="flex h-full flex-col" style={{ flex: "1 0 140px" }}>
-                  <div className="flex flex-1 items-end justify-center gap-2.5">
-                    {grp.months.map((m, i) => (
-                      <div key={i} className="flex h-full max-w-[58px] flex-1 flex-col items-center justify-end">
-                        <span className="num mb-1.5 text-[11.5px] font-semibold" style={{ color: m.valColor }}>{m.val}</span>
-                        <div className="w-full rounded-t-md" style={{ height: `${m.h}%`, minHeight: 3, background: m.fill }} />
-                        <span className="mt-1.5 text-[10.5px] text-muted-foreground">{m.label}</span>
-                      </div>
-                    ))}
+            <TooltipProvider delayDuration={100}>
+              <div className="flex h-44 items-end gap-2 overflow-x-auto pl-1">
+                {efcBars.map((grp) => (
+                  <div key={grp.depot} className="flex h-full flex-col" style={{ flex: "1 0 140px" }}>
+                    <div className="flex flex-1 items-end justify-center gap-2.5">
+                      {grp.months.map((m, i) => (
+                        <Tooltip key={i}>
+                          <TooltipTrigger asChild>
+                            <div className="flex h-full max-w-[58px] flex-1 flex-col items-center justify-end cursor-pointer group/bar">
+                              <span className="num mb-1.5 text-[11.5px] font-semibold transition-opacity group-hover/bar:text-foreground" style={{ color: m.valColor }}>{m.val}</span>
+                              <div className="w-full rounded-t-md transition-all group-hover/bar:brightness-110 group-hover/bar:scale-x-[1.05]" style={{ height: `${m.h}%`, minHeight: 3, background: m.fill }} />
+                              <span className="mt-1.5 text-[10.5px] text-muted-foreground group-hover/bar:text-foreground">{m.label}</span>
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <div className="text-[11px] p-0.5">
+                              <p className="font-semibold text-foreground">{grp.depot}</p>
+                              <p className="text-muted-foreground mt-0.5">{m.label} 2026: <strong className="text-foreground num">{m.val} EFC</strong></p>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      ))}
+                    </div>
+                    <div className="mt-2.5 border-t border-border/60 pt-2.5 text-center text-[12.5px] font-semibold">{grp.depot}</div>
                   </div>
-                  <div className="mt-2.5 border-t border-border/60 pt-2.5 text-center text-[12.5px] font-semibold">{grp.depot}</div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </TooltipProvider>
           </div>
 
           {/* PER-BUS EXPLORER */}
@@ -595,15 +626,6 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
           </div>
 
           <div className="flex flex-wrap items-center gap-4 rounded-2xl border border-border/60 bg-muted/40 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <span className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">Site</span>
-              <select value={drillDepot} onChange={(e) => { setDrillDepot(e.target.value); setSelected(null); }} className="h-[30px] rounded-lg border border-border/60 bg-card px-2.5 text-[12px] font-semibold text-foreground outline-none">
-                {dataset.depots.map((d) => (<option key={d} value={d}>{d}</option>))}
-              </select>
-            </div>
-            <FilterGroup label="Month">
-              {dataset.dataMonths.map((m) => (<Seg key={m} active={drillMonth === m} onClick={() => { setDrillMonth(m); setSelected(null); }}>{m.slice(0, 3)}</Seg>))}
-            </FilterGroup>
             <FilterGroup label="Band">
               {BANDS.map((b) => (<Seg key={b.value} active={band === b.value} onClick={() => setBand(b.value)}><span className="h-1.5 w-1.5 rounded-sm" style={{ background: b.dot }} /> {b.label}</Seg>))}
             </FilterGroup>
@@ -623,7 +645,7 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
                       const activeCol = sortKey === c.key;
                       return (
                         <th key={String(c.key)} onClick={() => toggleSort(c.key)} className="th-sort sticky top-0 cursor-pointer whitespace-nowrap border-b border-border px-3.5 py-2.5 text-[10px] font-semibold uppercase tracking-wide" style={{ textAlign: c.align, color: activeCol ? "var(--primary)" : "var(--muted-foreground)" }}>
-                          {c.label}{activeCol ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+                           {c.label}{activeCol ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
                         </th>
                       );
                     })}
@@ -634,7 +656,7 @@ function BatteryDashboard({ dataset, degraded }: { dataset: BatteryDataset; degr
                     const bc = BAND_COLOR[r.band] ?? "var(--muted-foreground)";
                     const isSel = selected?.bus.reg === r.reg;
                     return (
-                      <tr key={r.reg} onClick={() => liveDrill && pickBus(r, drillMonth)} className={cn("border-b border-border/40", r.band === "ATTENTION" && "cc-row-alert", liveDrill && "cursor-pointer hover:bg-muted/40", isSel && "bg-primary/5")}>
+                      <tr key={r.reg} onClick={() => liveDrill && pickBus(r, explorerMonth)} className={cn("border-b border-border/40", r.band === "ATTENTION" && "cc-row-alert", liveDrill && "cursor-pointer hover:bg-muted/40", isSel && "bg-primary/5")}>
                         <td className="whitespace-nowrap px-3.5 py-2.5"><div className="flex items-center gap-2.5"><span className="h-[22px] w-[3px] flex-none rounded-sm" style={{ background: bc }} /><span className="num font-semibold">{r.reg}</span></div></td>
                         <td className="whitespace-nowrap px-3.5 py-2.5 text-muted-foreground">{r.type || "—"}</td>
                         <td className="num px-3.5 py-2.5 text-right">{fmt(r.grossKwh, 0)}</td>
@@ -793,6 +815,7 @@ function BusDrillDrawer({ reg, type, monthName, reportMonth, summary, onClose }:
 
 /** Daily gross-discharge bars with an overlaid RTE% line. */
 function DailyChart({ rows }: { rows: CycleDailyRow[] }) {
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const W = 560;
   const H = 170;
   const padL = 6, padR = 6, padT = 14, padB = 18;
@@ -809,24 +832,117 @@ function DailyChart({ rows }: { rows: CycleDailyRow[] }) {
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).filter(Boolean).join(" ");
 
+  const hoveredRow = hoveredIdx !== null ? rows[hoveredIdx] : null;
+  const leftPercent = hoveredIdx !== null ? ((padL + slot * hoveredIdx + slot / 2) / Math.max(W, n * 16)) * 100 : 0;
+
   return (
-    <div className="overflow-x-auto rounded-xl border border-border/60 bg-muted/20 p-3">
+    <div className="relative overflow-x-auto rounded-xl border border-border/60 bg-muted/20 p-3">
       <svg width={Math.max(W, n * 16)} height={H} viewBox={`0 0 ${Math.max(W, n * 16)} ${H}`} className="block">
         {[0.25, 0.5, 0.75].map((g) => (<line key={g} x1={padL} x2={W - padR} y1={padT + innerH * g} y2={padT + innerH * g} stroke="color-mix(in oklab,var(--muted-foreground) 16%,transparent)" strokeWidth={1} />))}
+        
+        {/* Hover vertical dashed guide line */}
+        {hoveredIdx !== null && (
+          <line
+            x1={padL + slot * hoveredIdx + slot / 2}
+            x2={padL + slot * hoveredIdx + slot / 2}
+            y1={padT}
+            y2={padT + innerH}
+            stroke="color-mix(in oklab,var(--primary) 35%,transparent)"
+            strokeWidth={1.5}
+            strokeDasharray="3 3"
+            pointerEvents="none"
+          />
+        )}
+
         {rows.map((r, i) => {
           const v = r.gross_discharge_kwh ?? 0;
           const h = (v / maxGross) * innerH;
           const x = padL + slot * i + (slot - barW) / 2;
           const y = padT + innerH - h;
-          return <rect key={i} x={x} y={y} width={barW} height={Math.max(1, h)} rx={2} fill="color-mix(in oklab,var(--chart-4) 78%,transparent)" />;
+          const isHovered = hoveredIdx === i;
+          return (
+            <rect
+              key={i}
+              x={x}
+              y={y}
+              width={barW}
+              height={Math.max(1, h)}
+              rx={2}
+              fill={isHovered ? "var(--chart-4)" : "color-mix(in oklab,var(--chart-4) 78%,transparent)"}
+              pointerEvents="none"
+            />
+          );
         })}
         {rtePts && <polyline points={rtePts} fill="none" stroke="var(--primary)" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />}
+
+        {/* Highlight circle on line point when hovered */}
+        {hoveredIdx !== null && hoveredRow && hoveredRow.daily_rte_pct != null && (
+          <g pointerEvents="none">
+            <circle
+              cx={padL + slot * hoveredIdx + slot / 2}
+              cy={padT + innerH - (Math.min(100, hoveredRow.daily_rte_pct) / 100) * innerH}
+              r={6}
+              fill="var(--card)"
+              stroke="var(--primary)"
+              strokeWidth={2}
+            />
+            <circle
+              cx={padL + slot * hoveredIdx + slot / 2}
+              cy={padT + innerH - (Math.min(100, hoveredRow.daily_rte_pct) / 100) * innerH}
+              r={2.5}
+              fill="var(--primary)"
+            />
+          </g>
+        )}
+
+        {/* Hover detection vertical zones */}
+        {rows.map((r, i) => {
+          const x = padL + slot * i;
+          return (
+            <rect
+              key={`detect-${i}`}
+              x={x}
+              y={padT}
+              width={slot}
+              height={innerH}
+              fill="transparent"
+              className="cursor-pointer"
+              onMouseEnter={() => setHoveredIdx(i)}
+              onMouseLeave={() => setHoveredIdx(null)}
+            />
+          );
+        })}
       </svg>
       <div className="mt-1 flex justify-between text-[9.5px] text-muted-foreground">
         <span>{fmtDay(rows[0]?.session_date)}</span>
         <span className="num">peak {fmt(maxGross, 0)} kWh</span>
         <span>{fmtDay(rows[n - 1]?.session_date)}</span>
       </div>
+
+      {/* Floating interactive tooltip */}
+      {hoveredIdx !== null && hoveredRow && (
+        <div
+          className="absolute z-50 rounded-xl border border-border bg-card/95 p-2.5 shadow-elevated backdrop-blur-sm transition-all pointer-events-none text-[11.5px] min-w-[125px]"
+          style={{
+            left: `${leftPercent}%`,
+            top: "16px",
+            transform: leftPercent > 70 ? "translateX(-100%)" : leftPercent < 30 ? "translateX(0)" : "translateX(-50%)",
+            marginLeft: leftPercent > 70 ? "-8px" : leftPercent < 30 ? "8px" : "0",
+          }}
+        >
+          <div className="font-semibold text-foreground mb-1">{fmtDay(hoveredRow.session_date)}</div>
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <span className="h-2 w-2 rounded-sm bg-[var(--chart-4)]" />
+            <span>Gross: <strong className="text-foreground num">{fmt(hoveredRow.gross_discharge_kwh, 1)}</strong> kWh</span>
+          </div>
+          {hoveredRow.daily_rte_pct != null && (
+            <div className="flex items-center gap-1.5 text-muted-foreground mt-0.5">
+              <span className="h-2 w-2 rounded-sm bg-[var(--primary)]" />
+              <span>RTE: <strong className="text-foreground num">{fmt(hoveredRow.daily_rte_pct, 1)}%</strong></span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

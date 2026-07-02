@@ -104,18 +104,20 @@ export function FleetMixView({
         right={<TypeFilter types={types} value={selType} onChange={setSelType} />}
       >
         <div className="grid gap-x-8 gap-y-2 md:grid-cols-3">
-          {stats.map((s) => (
-            <div key={s.key} className="rounded-xl border border-border/50 p-3">
-              <div className="mb-2 flex items-center gap-2 text-[13px] font-semibold">
-                <span className="h-2.5 w-2.5 rounded-sm" style={{ background: depotColor(s.key, types) }} />
-                {s.key}
-                <span className="ml-auto text-[11px] font-normal text-muted-foreground">{s.buses} buses</span>
+          {stats
+            .filter((s) => selType === "ALL" || s.key === selType)
+            .map((s) => (
+              <div key={s.key} className="rounded-xl border border-border/50 p-3">
+                <div className="mb-2 flex items-center gap-2 text-[13px] font-semibold">
+                  <span className="h-2.5 w-2.5 rounded-sm" style={{ background: depotColor(s.key, types) }} />
+                  {s.key}
+                  <span className="ml-auto text-[11px] font-normal text-muted-foreground">{s.buses} buses</span>
+                </div>
+                <HBar label="Round-trip eff." value={s.rte} max={100} color="var(--primary)" suffix="%" />
+                <HBar label="Energy regen" value={s.regen} max={25} color="var(--chart-2)" suffix="%" />
+                <HBar label="Aux idle" value={s.idle} max={40} color="var(--warning)" suffix="%" />
               </div>
-              <HBar label="Round-trip eff." value={s.rte} max={100} color="var(--primary)" suffix="%" />
-              <HBar label="Energy regen" value={s.regen} max={25} color="var(--chart-2)" suffix="%" />
-              <HBar label="Aux idle" value={s.idle} max={40} color="var(--warning)" suffix="%" />
-            </div>
-          ))}
+            ))}
         </div>
       </Panel>
 
