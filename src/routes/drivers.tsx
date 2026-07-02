@@ -408,7 +408,7 @@ function DriverIntelligencePage() {
 
   return (
     <PageShell
-      eyebrow={usingLive ? "Live · mart_driver_leaderboard" : "Live · gold.driver_trip_behavior_fact + driver_contextual_score_fact"}
+      eyebrow="Live"
       title="Driver Intelligence"
       description="Contextual driver scoring, behavior fingerprints and peer benchmarking — calibrated to route difficulty."
       meta={

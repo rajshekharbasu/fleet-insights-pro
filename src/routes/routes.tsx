@@ -613,7 +613,7 @@ function RouteIntelligencePage() {
 
   return (
     <PageShell
-      eyebrow="Live · Mumbai MMR · gold.route_context_fact"
+      eyebrow="Live · Mumbai MMR"
       title="Route Intelligence"
       description="Compare two routes side-by-side — full corridor maps with DMS footprints, start-to-end, and head-to-head metrics."
       meta={
@@ -719,7 +719,7 @@ function RouteIntelligencePage() {
               )}
             </div>
             <p className="text-[12.5px] text-muted-foreground">
-              Ranked by peak difficulty score from mart_route_leaderboard. Click a route to compare on the map.
+              Ranked by peak difficulty score. Click a route to compare on the map.
             </p>
           </div>
           <div className="text-[11px] num text-muted-foreground">
@@ -764,7 +764,7 @@ function RouteIntelligencePage() {
                   </span>
                 </div>
                 <p className="text-[12.5px] text-muted-foreground">
-                  Fingerprint for {compareComparisonRows.map((r) => `R-${r.route_code}`).join(" vs ")} · from mart_route_comparison.
+                  Fingerprint for {compareComparisonRows.map((r) => `R-${r.route_code}`).join(" vs ")}.
                 </p>
               </div>
               <Brain className="h-4 w-4 text-muted-foreground" />

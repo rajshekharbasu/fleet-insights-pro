@@ -245,7 +245,7 @@ function DashboardPage() {
 
   return (
     <PageShell
-      eyebrow="Live · gold.trip_efficiency"
+      eyebrow="Live"
       title="EV fleet efficiency,"
       titleAccent="at a glance."
       description="Six months of trip-level telemetry, energy, and diagnostics — pivot, compare, and surface anomalies in seconds."
@@ -269,7 +269,7 @@ function DashboardPage() {
         <SectionHeader
           label="Overview"
           title="Key performance indicators"
-          description="Fleet-wide aggregates from mart_fleet_kpis vs. the mart's previous comparison window."
+          description="Fleet-wide aggregates vs. the previous comparison window."
           icon={LayoutGrid}
         />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
@@ -290,7 +290,7 @@ function DashboardPage() {
             icon={Gauge}
             spark={spark("kwhPerKm")}
             medianBenchmark={{
-              value: `${fmt(driverMedians.kwhPerKm, 2)} kWh/km`,
+              value: fmt(driverMedians.kwhPerKm, 2),
               lowerIsBetter: true,
               numericValue: tripMedians.kwhPerKm,
             }}
@@ -397,7 +397,7 @@ function DashboardPage() {
       <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border/40 pt-6 text-[11px] text-muted-foreground">
         <div className="flex items-center gap-2">
           <Activity className="h-3.5 w-3.5 text-primary" />
-          Data source: <span className="num font-medium text-foreground">redshift · gold.trip_efficiency</span>
+          Data source: <span className="num font-medium text-foreground">redshift</span>
         </div>
         <div className="num">
           Last sync · {new Date().toISOString().slice(0, 16).replace("T", " ")} UTC
