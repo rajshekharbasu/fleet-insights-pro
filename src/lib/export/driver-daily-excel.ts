@@ -1,4 +1,5 @@
 import type { DriverDailyTripRow, DriverTripDetailRow } from "@/lib/graphql/driver-trip-behavior";
+import { formatUtcTripTime } from "@/lib/driver-trip-datetime";
 
 type ExcelJSModule = typeof import("exceljs");
 type Workbook = import("exceljs").Workbook;
@@ -54,20 +55,6 @@ function setCellFill(cell: Cell, fillArgb: string, fontArgb: string, bold = fals
   cell.font = { color: { argb: fontArgb }, bold, size: 10, name: "Calibri" };
 }
 
-function formatTripTime(raw: string | null): string {
-  if (!raw) return "—";
-  const clock = raw.match(/(\d{1,2}):(\d{2})/);
-  if (clock && raw.length <= 12) {
-    const h = clock[1].padStart(2, "0");
-    return `${h}:${clock[2]}`;
-  }
-  const dt = new Date(raw);
-  if (!Number.isNaN(dt.getTime())) {
-    return dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
-  }
-  return raw.slice(0, 5);
-}
-
 function tripVehicleLabel(t: DriverTripDetailRow): string {
   return t.vehicleNumber ?? t.busCode ?? "—";
 }
@@ -80,15 +67,17 @@ const TRIP_COLUMNS: ColDef<DriverTripDetailRow>[] = [
   { header: "Time bucket", width: 12, type: "text", value: (r) => r.timeBucket },
   { header: "Vehicle size", width: 11, type: "text", value: (r) => r.vehicleSize },
   { header: "Vehicle", width: 12, type: "text", value: (r) => tripVehicleLabel(r) },
-  { header: "Sched. start", width: 10, type: "text", value: (r) => formatTripTime(r.tripStartTime) },
-  { header: "Sched. end", width: 10, type: "text", value: (r) => formatTripTime(r.tripEndTime) },
-  { header: "Actual start", width: 10, type: "text", value: (r) => formatTripTime(r.actualTripStartTime) },
-  { header: "Actual end", width: 10, type: "text", value: (r) => formatTripTime(r.actualTripEndTime) },
+  { header: "Sched. start", width: 10, type: "text", value: (r) => formatUtcTripTime(r.tripStartTime) },
+  { header: "Sched. end", width: 10, type: "text", value: (r) => formatUtcTripTime(r.tripEndTime) },
+  { header: "Actual start", width: 10, type: "text", value: (r) => formatUtcTripTime(r.actualTripStartTime) },
+  { header: "Actual end", width: 10, type: "text", value: (r) => formatUtcTripTime(r.actualTripEndTime) },
   { header: "Actual dur. (min)", width: 12, type: "num1", value: (r) => r.actualTripDurationMin },
   { header: "Actual dist. (km)", width: 13, type: "num1", value: (r) => r.actualDistanceKm },
   { header: "Efficiency (kWh/km)", width: 15, type: "num2", value: (r) => r.kwhPerKm },
   { header: "Difficulty", width: 10, type: "num1", value: (r) => r.routeDifficultyScore },
-  { header: "DMS events", width: 10, type: "int", value: (r) => r.totalDmsEvents },
+  { header: "Peer %", width: 9, type: "int", value: (r) => (r.peerPercentile > 0 ? r.peerPercentile : null) },
+  { header: "Score band", width: 10, type: "text", value: (r) => r.driverScoreBand },
+  { header: "Alerts", width: 9, type: "int", value: (r) => r.totalDmsEvents },
   { header: "Braking /100km", width: 12, type: "num1", value: (r) => r.hardBrakingDensity },
   { header: "Overspeed /100km", width: 13, type: "num1", value: (r) => r.overspeedDensity },
   { header: "Distraction /100km", width: 14, type: "num1", value: (r) => r.distractionDensity },
@@ -109,7 +98,8 @@ const DAILY_COLUMNS: ColDef<DriverDailyTripRow>[] = [
   { header: "Efficiency (kWh/km)", width: 16, type: "num2", value: (r) => r.avgEfficiencyKwhPerKm },
   { header: "Median eff. (kWh/km)", width: 16, type: "num2", value: (r) => r.medianEfficiencyKwhPerKm },
   { header: "Route exposure", width: 13, type: "num2", value: (r) => r.avgRouteDifficulty },
-  { header: "DMS events", width: 11, type: "int", value: (r) => r.dmsEvents },
+  { header: "Peer %", width: 9, type: "int", value: (r) => (r.avgPeerPercentile > 0 ? r.avgPeerPercentile : null) },
+  { header: "Alerts", width: 9, type: "int", value: (r) => r.dmsEvents },
   { header: "Braking /100km", width: 13, type: "num2", value: (r) => r.avgBrakingDensity },
   { header: "Overspeed /100km", width: 14, type: "num2", value: (r) => r.avgOverspeedDensity },
   { header: "Distraction /100km", width: 15, type: "num2", value: (r) => r.avgDistractionDensity },

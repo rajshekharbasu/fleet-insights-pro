@@ -37,12 +37,18 @@ export interface DriverLeaderboardExtras {
   coachingTrigger: string | null;
   incentiveEligible: boolean;
   reviewRequired: boolean;
+  /** Raw letter grade from mart_driver_leaderboard.score_band (e.g. A–D). */
+  rawScoreBand: string | null;
 }
 
 export type DriverLeaderboardEntry = DriverScore & { extras: DriverLeaderboardExtras };
 
 function mapBand(band: string | null, score: number): DriverScore["risk_band"] {
   const b = (band ?? "").toLowerCase().replace(/[\s_-]/g, "");
+  if (/^a\+?$/.test(b)) return "Elite";
+  if (/^b\+?$/.test(b)) return "Strong";
+  if (/^c\+?$/.test(b)) return "Average";
+  if (/^d\+?$/.test(b)) return "At-risk";
   if (b.includes("elite") || b.includes("excellent") || b.includes("top")) return "Elite";
   if (b.includes("strong") || b.includes("good")) return "Strong";
   if (b.includes("average") || b.includes("fair") || b.includes("medium") || b.includes("moderate")) return "Average";
@@ -76,9 +82,8 @@ function mapRowToEntry(row: Record<string, unknown>, index: number): DriverLeade
   const scoreTrend = str(row.score_trend);
   const driverId = str(row.driver_id) ?? `mart-driver-${index}`;
   const driverName = str(row.driver_name) ?? `Driver ${index + 1}`;
-  // peer_percentile is a 0..1 fraction; the displayed contextual score is its 0..100 form.
   const peerPercentile = num(row.peer_percentile);
-  const score = peerPercentile * 100;
+  const score = row.score == null ? peerPercentile * 100 : num(row.score);
 
   return {
     driver_id: driverId,
@@ -116,6 +121,7 @@ function mapRowToEntry(row: Record<string, unknown>, index: number): DriverLeade
       coachingTrigger: str(row.coaching_trigger),
       incentiveEligible: bool(row.incentive_eligible),
       reviewRequired: bool(row.review_required),
+      rawScoreBand: str(row.score_band),
     },
   };
 }

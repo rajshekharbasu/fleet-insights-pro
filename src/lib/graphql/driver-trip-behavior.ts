@@ -60,6 +60,8 @@ export interface DriverDailyTripRow {
   avgRegenPct: number;
   driverStars: number;
   highRiskTrips: number;
+  /** Mean peer percentile (0–100) across trips that day. */
+  avgPeerPercentile: number;
 }
 
 /** Single trip row from driver_trip_behavior_fact (no daily rollup). */
@@ -88,6 +90,9 @@ export interface DriverTripDetailRow {
   regenRatio: number;
   driverStarCount: number;
   behaviorRiskFlag: string | null;
+  /** Peer percentile on a 0–100 scale. */
+  peerPercentile: number;
+  driverScoreBand: string | null;
 }
 
 export interface DriverTripBehaviorFilters {
@@ -189,7 +194,8 @@ function buildDailySql(table: string, driverId: string, limit: number, filters?:
       round(avg(fatigue_density_per_100km), 2) AS avg_fatigue_density,
       round(avg(regen_ratio) * 100, 1) AS avg_regen_pct,
       sum(coalesce(driver_star_count, 0)) AS driver_stars,
-      sum(CASE WHEN behavior_risk_flag = 'HIGH' THEN 1 ELSE 0 END) AS high_risk_trips
+      sum(CASE WHEN behavior_risk_flag = 'HIGH' THEN 1 ELSE 0 END) AS high_risk_trips,
+      round(avg(peer_percentile) * 100, 0) AS avg_peer_percentile
     FROM ${table}
     WHERE ${clauses.join(" AND ")}
     GROUP BY scheduling_date
@@ -217,6 +223,7 @@ function mapDailyRow(row: Record<string, unknown>): DriverDailyTripRow {
     avgRegenPct: num(row.avg_regen_pct),
     driverStars: Math.round(num(row.driver_stars)),
     highRiskTrips: Math.round(num(row.high_risk_trips)),
+    avgPeerPercentile: Math.round(num(row.avg_peer_percentile)),
   };
 }
 
@@ -269,7 +276,9 @@ function buildTripDetailSelect(): string {
       fatigue_density_per_100km,
       regen_ratio,
       driver_star_count,
-      behavior_risk_flag`;
+      behavior_risk_flag,
+      peer_percentile,
+      driver_score_band`;
 }
 
 function buildTripDetailSql(table: string, driverId: string, schedulingDate: string): string {
@@ -322,6 +331,8 @@ function mapTripDetailRow(row: Record<string, unknown>): DriverTripDetailRow {
     regenRatio: num(row.regen_ratio),
     driverStarCount: Math.round(num(row.driver_star_count)),
     behaviorRiskFlag: str(row.behavior_risk_flag),
+    peerPercentile: Math.round(num(row.peer_percentile) * 100),
+    driverScoreBand: str(row.driver_score_band),
   };
 }
 
@@ -367,4 +378,52 @@ export async function fetchDriverTripDetails(
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+function sortTripDetails(rows: DriverTripDetailRow[]): DriverTripDetailRow[] {
+  return [...rows].sort((a, b) => {
+    const dateCmp = a.schedulingDate.localeCompare(b.schedulingDate);
+    if (dateCmp !== 0) return dateCmp;
+    return (a.actualTripStartTime ?? a.tripStartTime ?? "").localeCompare(
+      b.actualTripStartTime ?? b.tripStartTime ?? "",
+    );
+  });
+}
+
+/**
+ * Fetches trip rows for export by querying one scheduling_date at a time.
+ * This matches the in-app day expand path and avoids brittle multi-partition window scans.
+ */
+export async function fetchDriverTripDetailsForExport(
+  driverId: string,
+  dailyRows: DriverDailyTripRow[],
+  window?: DriverTripBehaviorFilters,
+): Promise<DriverTripDetailRow[]> {
+  const dates = [...new Set(dailyRows.map((r) => r.schedulingDate))].sort();
+  const collected: DriverTripDetailRow[] = [];
+
+  const chunkSize = 5;
+  for (let i = 0; i < dates.length; i += chunkSize) {
+    const chunk = dates.slice(i, i + chunkSize);
+    const batch = await Promise.all(
+      chunk.map(async (date) => {
+        try {
+          return await fetchDriverTripsForDay(driverId, date);
+        } catch {
+          return [] as DriverTripDetailRow[];
+        }
+      }),
+    );
+    collected.push(...batch.flat());
+  }
+
+  if (collected.length > 0) {
+    return sortTripDetails(collected);
+  }
+
+  if (window) {
+    return fetchDriverTripDetails(driverId, window);
+  }
+
+  return [];
 }
