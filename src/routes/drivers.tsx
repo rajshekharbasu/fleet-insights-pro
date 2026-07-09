@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Award, BadgeCheck, Brain, ChevronRight, Crown, FileSpreadsheet, GraduationCap, Loader2, Maximize2, ShieldAlert, Star,
@@ -173,9 +173,9 @@ function FilterDetailPanel({
   const cols: { key: string; head: string; cell: (e: DriverLeaderboardEntry) => ReactNode; align?: string }[] =
     filter === "incentive"
       ? [
-          { key: "score", head: "Score", cell: (e) => <span className="num">{fmt(e.contextual_score)}</span>, align: "text-right" },
+          { key: "driverScore", head: "Driver score", cell: (e) => <span className="num">{fmt(e.contextual_score)}</span>, align: "text-right" },
+          { key: "drivingScore", head: "Driving score", cell: (e) => <span className="num">{e.percentile}%</span>, align: "text-right" },
           { key: "band", head: "Band", cell: (e) => <ScoreBandBadge band={e.extras.rawScoreBand ?? e.risk_band} /> },
-          { key: "pct", head: "Peer %", cell: (e) => <span className="num">{e.percentile}%</span>, align: "text-right" },
           { key: "stars", head: "Stars/trip", cell: (e) => <span className="num">{e.extras.starsPerTripWeighted == null ? "—" : fmt(e.extras.starsPerTripWeighted, 2)}</span>, align: "text-right" },
           { key: "trips", head: "Trips scored", cell: (e) => <span className="num">{e.extras.tripsScored ?? "—"}</span>, align: "text-right" },
           { key: "eff", head: "Efficiency", cell: (e) => <span className="num">{fmt(e.efficiency_kwh_per_km, 2)}</span>, align: "text-right" },
@@ -183,9 +183,9 @@ function FilterDetailPanel({
         ]
       : filter === "review"
       ? [
-          { key: "score", head: "Score", cell: (e) => <span className="num">{fmt(e.contextual_score)}</span>, align: "text-right" },
+          { key: "driverScore", head: "Driver score", cell: (e) => <span className="num">{fmt(e.contextual_score)}</span>, align: "text-right" },
+          { key: "drivingScore", head: "Driving score", cell: (e) => <span className="num">{e.percentile}%</span>, align: "text-right" },
           { key: "band", head: "Band", cell: (e) => <ScoreBandBadge band={e.extras.rawScoreBand ?? e.risk_band} /> },
-          { key: "pct", head: "Peer %", cell: (e) => <span className="num">{e.percentile}%</span>, align: "text-right" },
           { key: "risk", head: "Dominant risk", cell: (e) => <span className="capitalize">{e.extras.dominantRisk ?? "—"}</span> },
           { key: "hr", head: "High-risk", cell: (e) => <span className="num">{pctCell(e.extras.highRiskRatio)}</span>, align: "text-right" },
           { key: "fatigue", head: "Fatigue", cell: (e) => <span className="num">{e.extras.fatigueDensity == null ? "—" : fmt(e.extras.fatigueDensity, 2)}</span>, align: "text-right" },
@@ -193,9 +193,9 @@ function FilterDetailPanel({
           { key: "trend", head: "Trend", cell: (e) => <TrendCell extras={e.extras} /> },
         ]
       : [
-          { key: "score", head: "Score", cell: (e) => <span className="num">{fmt(e.contextual_score)}</span>, align: "text-right" },
+          { key: "driverScore", head: "Driver score", cell: (e) => <span className="num">{fmt(e.contextual_score)}</span>, align: "text-right" },
+          { key: "drivingScore", head: "Driving score", cell: (e) => <span className="num">{e.percentile}%</span>, align: "text-right" },
           { key: "band", head: "Band", cell: (e) => <ScoreBandBadge band={e.extras.rawScoreBand ?? e.risk_band} /> },
-          { key: "pct", head: "Peer %", cell: (e) => <span className="num">{e.percentile}%</span>, align: "text-right" },
           { key: "module", head: "Module", cell: (e) => <span>{e.extras.coachingModule ?? "—"}</span> },
           { key: "trigger", head: "Trigger", cell: (e) => <span className="text-muted-foreground">{e.extras.coachingTrigger ?? "—"}</span> },
           { key: "risk", head: "Dominant risk", cell: (e) => <span className="capitalize">{e.extras.dominantRisk ?? "—"}</span> },
@@ -326,9 +326,9 @@ function DriverCard({ d, extras, onOpen }: {
       </div>
       <div className="mt-3 flex items-end justify-between">
         <div>
-          <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Peer percentile</div>
-          <div className="num text-[22px] font-semibold tracking-tight">P{d.percentile}</div>
-          <div className="text-[11px] num text-muted-foreground">score {fmt(d.contextual_score)} · exposure {fmt(d.difficulty_exposure, 0)}</div>
+          <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Driver score</div>
+          <div className="num text-[22px] font-semibold tracking-tight">{fmt(d.contextual_score)}</div>
+          <div className="text-[11px] num text-muted-foreground">driving {d.percentile}% · exposure {fmt(d.difficulty_exposure, 0)}</div>
         </div>
         <div className="h-10 w-24">
           <ResponsiveContainer width="100%" height="100%">
@@ -489,7 +489,7 @@ function DriverIntelligencePage() {
       <section className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         {usingLive ? (
           <>
-            <MiniStat label="Avg percentile" value={fmt(avgScore)} unit="/100" hint="Peer-ranked" />
+            <MiniStat label="Avg driver score" value={fmt(avgScore)} unit="/100" hint="Contextual · route-adjusted" />
             <MiniStat label="Incentive eligible" value={String(incentiveCount)} tone="success" hint="Top performers" onClick={() => toggleFilter("incentive")} active={filter === "incentive"} />
             <MiniStat label="Needs review" value={String(reviewCount)} tone="destructive" hint="Coaching priority" onClick={() => toggleFilter("review")} active={filter === "review"} />
             <MiniStat label="Fleet efficiency" value={fmt(avgEff, 2)} unit="kWh/km" hint="Avg of leaderboard" />
@@ -585,7 +585,7 @@ function DriverIntelligencePage() {
                     {i === 0 && <Crown className="h-3 w-3 text-warning" />}
                     <span className="truncate">{d.driver_name}</span>
                   </span>
-                  <span className="num text-muted-foreground">P{d.percentile}</span>
+                  <span className="num text-muted-foreground">{fmt(d.contextual_score)} / {d.percentile}%</span>
                 </div>
                 <div className="h-1.5 overflow-hidden rounded-full bg-muted/40">
                   <div
@@ -751,12 +751,21 @@ const DAILY_TRIP_COLS: DailyTripCol[] = [
     cell: (r) => <span className="num tabular-nums">{fmt(r.avgRouteDifficulty, 0)}</span>,
   },
   {
-    key: "peer",
-    head: "Peer %",
-    title: "Avg peer percentile across trips",
+    key: "driverScore",
+    head: "Driver score",
+    title: "Avg contextual driver score (route-adjusted)",
     align: "text-right",
     cell: (r) => (
-      <span className="num tabular-nums">{r.avgPeerPercentile > 0 ? `${r.avgPeerPercentile}%` : "—"}</span>
+      <span className="num tabular-nums">{r.avgContextualDriverScore > 0 ? fmt(r.avgContextualDriverScore) : "—"}</span>
+    ),
+  },
+  {
+    key: "drivingScore",
+    head: "Driving score",
+    title: "Avg peer-ranked driving score",
+    align: "text-right",
+    cell: (r) => (
+      <span className="num tabular-nums">{r.avgDrivingScore > 0 ? `${r.avgDrivingScore}%` : "—"}</span>
     ),
   },
   {
@@ -933,12 +942,23 @@ const TRIP_DETAIL_COLS: TripDetailCol[] = [
     cell: (t) => <span className="num tabular-nums">{fmt(t.routeDifficultyScore, 1)}</span>,
   },
   {
-    key: "peer",
-    head: "Peer %",
+    key: "driverScore",
+    head: "Driver score",
+    title: "contextual_driver_score",
+    align: "text-right",
+    cell: (t) => (
+      <span className="num tabular-nums">
+        {t.contextualDriverScore != null && t.contextualDriverScore > 0 ? fmt(t.contextualDriverScore) : "—"}
+      </span>
+    ),
+  },
+  {
+    key: "drivingScore",
+    head: "Driving score",
     title: "peer_percentile",
     align: "text-right",
     cell: (t) => (
-      <span className="num tabular-nums">{t.peerPercentile > 0 ? `${t.peerPercentile}%` : "—"}</span>
+      <span className="num tabular-nums">{t.drivingScore > 0 ? `${t.drivingScore}%` : "—"}</span>
     ),
   },
   {
@@ -1030,7 +1050,16 @@ function DriverDayTripDetails({
     queryFn: () => fetchDriverTripsForDay(driverId, schedulingDate),
     staleTime: 60_000,
   });
+  const trips = data?.rows ?? [];
   const ctx = { windowAvgEff };
+
+  useEffect(() => {
+    if (data?.storageError) {
+      toast.warning(
+        data.message ?? `Could not load trips for ${formatUtcTripDate(schedulingDate)}.`,
+      );
+    }
+  }, [data?.storageError, data?.message, schedulingDate]);
 
   const panel = (content: ReactNode) => (
     <div className="mx-2 my-2 overflow-hidden rounded-xl border border-primary/15 bg-linear-to-br from-muted/25 via-card to-card shadow-sm ring-1 ring-border/50 sm:mx-3">
@@ -1039,9 +1068,9 @@ function DriverDayTripDetails({
         <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground/85">
           Trip detail · {formatUtcTripDate(schedulingDate)}
         </span>
-        {data?.length != null && !isLoading && !isError && (
+        {trips.length != null && !isLoading && !isError && !data?.storageError && (
           <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-            {data.length} {data.length === 1 ? "trip" : "trips"}
+            {trips.length} {trips.length === 1 ? "trip" : "trips"}
           </span>
         )}
       </div>
@@ -1064,7 +1093,14 @@ function DriverDayTripDetails({
       </div>,
     );
   }
-  if (!data?.length) {
+  if (data?.storageError) {
+    return panel(
+      <div className={cn("px-4 py-8 text-center", textSize, "text-warning")}>
+        {data.message ?? "Trip data for this day is temporarily unavailable."}
+      </div>,
+    );
+  }
+  if (!trips.length) {
     return panel(
       <div className={cn("px-4 py-8 text-center", textSize, "text-muted-foreground")}>
         No trips for this day.
@@ -1084,7 +1120,7 @@ function DriverDayTripDetails({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {data.map((t) => (
+        {trips.map((t) => (
           <TableRow
             key={t.tripId || `${schedulingDate}-${t.tripStartTime}`}
             className={cn(
@@ -1232,8 +1268,8 @@ function DriverDailyTripsSection({
     queryFn: async () => {
       const anchorDate = await resolveDriverTripBehaviorAnchor(driverId, extras);
       const window = computeTripBehaviorWindow(anchorDate);
-      const rows = await fetchDriverTripBehavior(driverId, TRIP_BEHAVIOR_WINDOW_DAYS + 1, window);
-      return { rows, anchorDate, window };
+      const result = await fetchDriverTripBehavior(driverId, TRIP_BEHAVIOR_WINDOW_DAYS + 1, window);
+      return { ...result, anchorDate, window };
     },
     enabled,
     staleTime: 60_000,
@@ -1241,6 +1277,7 @@ function DriverDailyTripsSection({
 
   const rows = data?.rows ?? [];
   const window = data?.window;
+  const tripWarning = data?.warning;
   const previewRows = rows.length > INLINE_PREVIEW_DAYS ? rows.slice(-INLINE_PREVIEW_DAYS) : rows;
   const totalTrips = rows.reduce((s, r) => s + r.tripCount, 0);
   const totalAlerts = rows.reduce((s, r) => s + r.dmsEvents, 0);
@@ -1249,18 +1286,38 @@ function DriverDailyTripsSection({
     : null;
   const modalTitle = `${driverName} — Daily trip behavior — last ${TRIP_BEHAVIOR_WINDOW_DAYS} days`;
 
+  useEffect(() => {
+    if (tripWarning) toast.warning(tripWarning);
+  }, [tripWarning]);
+
+  useEffect(() => {
+    if (isError) {
+      toast.error(error instanceof Error ? error.message : "Failed to load daily trip data.");
+    }
+  }, [isError, error]);
+
   async function handleExport() {
     if (exporting || rows.length === 0 || !window) return;
     setExporting(true);
     try {
-      const tripRows = await fetchDriverTripDetailsForExport(driverId, rows, window);
+      const { rows: tripRows, partial, failedDates } = await fetchDriverTripDetailsForExport(
+        driverId,
+        rows,
+        window,
+      );
       if (tripRows.length === 0) {
         toast.error("No trip-level rows found for export in this window.");
         return;
       }
       const dateSpan = `${window.fromDate} → ${window.toDate}`;
       await exportDriverTrips(driverName, tripRows, { dailySummary: rows, dateSpan });
-      toast.success(`Exported ${tripRows.length} trips (${rows.length} days) to Excel.`);
+      if (partial && failedDates?.length) {
+        toast.warning(
+          `Exported ${tripRows.length} trips; ${failedDates.length} day(s) skipped due to storage errors.`,
+        );
+      } else {
+        toast.success(`Exported ${tripRows.length} trips (${rows.length} days) to Excel.`);
+      }
     } catch (err) {
       console.error("Trip export failed", err);
       toast.error("Trip export failed.");
@@ -1303,6 +1360,11 @@ function DriverDailyTripsSection({
         </div>
         {headerActions}
       </div>
+      {tripWarning && (
+        <div className="mb-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-warning">
+          {tripWarning}
+        </div>
+      )}
       <div className="overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm">
         {isLoading ? (
           <div className="flex items-center justify-center gap-2 py-12 text-[12px] text-muted-foreground">
@@ -1403,7 +1465,7 @@ function DriverDrawer({
             <div>
               <div className="text-[15px] font-semibold tracking-tight">{d.driver_name}</div>
               <div className="flex flex-wrap items-center gap-1.5 text-[11.5px] text-muted-foreground">
-                <span>{d.company_name} · {d.trips_30d} trips · P{d.percentile}</span>
+                <span>{d.company_name} · {d.trips_30d} trips · {fmt(d.contextual_score)} / {d.percentile}%</span>
                 <ScoreBandBadge band={extras?.rawScoreBand ?? d.risk_band} />
               </div>
             </div>
@@ -1415,12 +1477,14 @@ function DriverDrawer({
         <div className="space-y-5 p-5">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
-              <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Context score</div>
+              <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Driver score</div>
               <div className="num text-[22px] font-semibold">{fmt(d.contextual_score)}</div>
+              <div className="text-[10px] text-muted-foreground">Contextual · route-adjusted</div>
             </div>
             <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
-              <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Peer percentile</div>
-              <div className="num text-[22px] font-semibold">P{d.percentile}</div>
+              <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Driving score</div>
+              <div className="num text-[22px] font-semibold">{d.percentile}%</div>
+              <div className="text-[10px] text-muted-foreground">Peer-ranked performance</div>
             </div>
             <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
               <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Score band</div>

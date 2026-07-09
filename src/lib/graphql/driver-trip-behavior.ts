@@ -1,11 +1,45 @@
 import { GRAPHQL_API_URL } from "./config";
 
+const TRANSIENT_STORAGE_ERROR_RE =
+  /ExpiredToken|TokenRefreshRequired|RequestTimeout|SlowDown|ServiceUnavailable|ECONNRESET|503|429/i;
+const STORAGE_PARTITION_ERROR_RE =
+  /ExpiredToken|TokenRefreshRequired|HTTP 400 Bad Request|HTTP GET error reading|Bad Request|S3|IO Error|parquet|partition/i;
+
 function parseSqlQueryResult<T>(result: T[] | { error?: string } | null | undefined): T[] {
   if (!result) return [];
   if (!Array.isArray(result)) {
     throw new Error(result.error || "GraphQL sqlQuery error");
   }
   return result;
+}
+
+function extractErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+export function isTransientStorageError(err: unknown): boolean {
+  return TRANSIENT_STORAGE_ERROR_RE.test(extractErrorMessage(err));
+}
+
+export function isStoragePartitionError(err: unknown): boolean {
+  return STORAGE_PARTITION_ERROR_RE.test(extractErrorMessage(err));
+}
+
+/** Short, user-facing copy for S3 / partition read failures. */
+export function friendlyStorageErrorMessage(err: unknown): string {
+  const msg = extractErrorMessage(err);
+  if (/ExpiredToken/i.test(msg)) {
+    return "Trip data for this day is temporarily unavailable (storage credentials expired). Other days may still load.";
+  }
+  if (/HTTP 400 Bad Request|S3|parquet|partition/i.test(msg)) {
+    return "Trip data for this day could not be read from storage. Other days may still load.";
+  }
+  return "Trip data for this day could not be loaded.";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function sqlStr(v: string): string {
@@ -24,7 +58,22 @@ const TRIP_BEHAVIOR_TABLES = [
   "glue_catalog.gold_db.driver_trip_behavior_fact",
 ] as const;
 
-async function runSql<T = Record<string, unknown>>(sql: string): Promise<T[]> {
+const CONTEXTUAL_SCORE_TABLES = [
+  "driver_contextual_score_fact",
+  "glue_catalog.gold_db.driver_contextual_score_fact",
+] as const;
+
+function contextualScoreJoin(behaviorTable: string, contextualTable: string): string {
+  return `LEFT JOIN ${contextualTable} c ON b.trip_id = c.trip_id`;
+}
+
+function resolveContextualJoin(behaviorTable: string): string {
+  const idx = TRIP_BEHAVIOR_TABLES.indexOf(behaviorTable as (typeof TRIP_BEHAVIOR_TABLES)[number]);
+  const contextualTable = CONTEXTUAL_SCORE_TABLES[idx >= 0 ? idx : 0];
+  return contextualScoreJoin(behaviorTable, contextualTable);
+}
+
+async function runSqlOnce<T = Record<string, unknown>>(sql: string): Promise<T[]> {
   const res = await fetch(GRAPHQL_API_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -37,6 +86,23 @@ async function runSql<T = Record<string, unknown>>(sql: string): Promise<T[]> {
   const json = await res.json();
   if (json.errors) throw new Error(json.errors[0]?.message || "GraphQL query error");
   return parseSqlQueryResult<T>(json.data?.sqlQuery);
+}
+
+async function runSql<T = Record<string, unknown>>(sql: string, retries = 2): Promise<T[]> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await runSqlOnce<T>(sql);
+    } catch (err) {
+      lastError = err;
+      if (attempt < retries && isTransientStorageError(err)) {
+        await sleep(350 * (attempt + 1));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 function isTableMissingError(err: unknown): boolean {
@@ -60,8 +126,10 @@ export interface DriverDailyTripRow {
   avgRegenPct: number;
   driverStars: number;
   highRiskTrips: number;
-  /** Mean peer percentile (0–100) across trips that day. */
-  avgPeerPercentile: number;
+  /** Mean contextual driver score (0–100) across trips that day. */
+  avgContextualDriverScore: number;
+  /** Mean driving score / peer percentile (0–100) across trips that day. */
+  avgDrivingScore: number;
 }
 
 /** Single trip row from driver_trip_behavior_fact (no daily rollup). */
@@ -90,14 +158,35 @@ export interface DriverTripDetailRow {
   regenRatio: number;
   driverStarCount: number;
   behaviorRiskFlag: string | null;
-  /** Peer percentile on a 0–100 scale. */
-  peerPercentile: number;
+  /** Contextual driver score (0–100), route-adjusted. */
+  contextualDriverScore: number | null;
+  /** Driving score from peer percentile (0–100). */
+  drivingScore: number;
   driverScoreBand: string | null;
 }
 
 export interface DriverTripBehaviorFilters {
   fromDate?: string;
   toDate?: string;
+}
+
+export interface DriverTripBehaviorFetchResult {
+  rows: DriverDailyTripRow[];
+  partial?: boolean;
+  failedDates?: string[];
+  warning?: string;
+}
+
+export interface DriverTripsForDayResult {
+  rows: DriverTripDetailRow[];
+  storageError?: boolean;
+  message?: string;
+}
+
+export interface DriverTripExportResult {
+  rows: DriverTripDetailRow[];
+  partial?: boolean;
+  failedDates?: string[];
 }
 
 /** Rolling window length aligned with driver score leaderboard (days inclusive of anchor). */
@@ -113,6 +202,17 @@ function formatISODate(dt: Date): string {
   const m = String(dt.getMonth() + 1).padStart(2, "0");
   const d = String(dt.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+function enumerateDates(fromDate: string, toDate: string): string[] {
+  const dates: string[] = [];
+  const cur = parseISODate(fromDate);
+  const end = parseISODate(toDate);
+  while (cur <= end) {
+    dates.push(formatISODate(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return dates;
 }
 
 /** Inclusive [anchor − windowDays, anchor] scheduling_date range. */
@@ -175,31 +275,35 @@ export async function resolveDriverTripBehaviorAnchor(
 }
 
 function buildDailySql(table: string, driverId: string, limit: number, filters?: DriverTripBehaviorFilters): string {
-  const clauses = [`driver_id = ${sqlStr(driverId)}`];
-  if (filters?.fromDate) clauses.push(`scheduling_date >= ${sqlStr(filters.fromDate)}`);
-  if (filters?.toDate) clauses.push(`scheduling_date <= ${sqlStr(filters.toDate)}`);
+  const clauses = [`b.driver_id = ${sqlStr(driverId)}`];
+  if (filters?.fromDate) clauses.push(`b.scheduling_date >= ${sqlStr(filters.fromDate)}`);
+  if (filters?.toDate) clauses.push(`b.scheduling_date <= ${sqlStr(filters.toDate)}`);
+
+  const contextualJoin = resolveContextualJoin(table);
+  const fromClause = `${table} b ${contextualJoin}`;
 
   return `
     SELECT
-      scheduling_date,
+      b.scheduling_date,
       count(*) AS trip_count,
-      round(sum(distance_km_odo_trip), 1) AS total_distance_km,
-      round(avg(kwh_per_km), 4) AS avg_efficiency,
-      round(median(kwh_per_km), 4) AS median_efficiency,
-      round(avg(route_difficulty_score), 1) AS avg_exposure,
-      sum(total_dms_events) AS dms_events,
-      round(avg(hard_braking_density_per_100km), 2) AS avg_braking_density,
-      round(avg(overspeed_density_per_100km), 2) AS avg_overspeed_density,
-      round(avg(distraction_density_per_100km), 2) AS avg_distraction_density,
-      round(avg(fatigue_density_per_100km), 2) AS avg_fatigue_density,
-      round(avg(regen_ratio) * 100, 1) AS avg_regen_pct,
-      sum(coalesce(driver_star_count, 0)) AS driver_stars,
-      sum(CASE WHEN behavior_risk_flag = 'HIGH' THEN 1 ELSE 0 END) AS high_risk_trips,
-      round(avg(peer_percentile) * 100, 0) AS avg_peer_percentile
-    FROM ${table}
+      round(sum(b.distance_km_odo_trip), 1) AS total_distance_km,
+      round(avg(b.kwh_per_km), 4) AS avg_efficiency,
+      round(median(b.kwh_per_km), 4) AS median_efficiency,
+      round(avg(b.route_difficulty_score), 1) AS avg_exposure,
+      sum(b.total_dms_events) AS dms_events,
+      round(avg(b.hard_braking_density_per_100km), 2) AS avg_braking_density,
+      round(avg(b.overspeed_density_per_100km), 2) AS avg_overspeed_density,
+      round(avg(b.distraction_density_per_100km), 2) AS avg_distraction_density,
+      round(avg(b.fatigue_density_per_100km), 2) AS avg_fatigue_density,
+      round(avg(b.regen_ratio) * 100, 1) AS avg_regen_pct,
+      sum(coalesce(b.driver_star_count, 0)) AS driver_stars,
+      sum(CASE WHEN b.behavior_risk_flag = 'HIGH' THEN 1 ELSE 0 END) AS high_risk_trips,
+      round(avg(c.contextual_driver_score), 1) AS avg_contextual_driver_score,
+      round(avg(b.peer_percentile) * 100, 0) AS avg_driving_score
+    FROM ${fromClause}
     WHERE ${clauses.join(" AND ")}
-    GROUP BY scheduling_date
-    ORDER BY scheduling_date ASC
+    GROUP BY b.scheduling_date
+    ORDER BY b.scheduling_date ASC
     LIMIT ${limit}
   `;
 }
@@ -223,26 +327,24 @@ function mapDailyRow(row: Record<string, unknown>): DriverDailyTripRow {
     avgRegenPct: num(row.avg_regen_pct),
     driverStars: Math.round(num(row.driver_stars)),
     highRiskTrips: Math.round(num(row.high_risk_trips)),
-    avgPeerPercentile: Math.round(num(row.avg_peer_percentile)),
+    avgContextualDriverScore: num(row.avg_contextual_driver_score),
+    avgDrivingScore: Math.round(num(row.avg_driving_score)),
   };
 }
 
-/**
- * Fetches per-day trip behavior rollups for one driver from driver_trip_behavior_fact.
- * Rows are ordered chronologically (oldest first).
- * Default limit covers a 30-day window plus one spare row.
- */
-export async function fetchDriverTripBehavior(
+async function fetchSingleDayDailyRow(
   driverId: string,
-  limit = TRIP_BEHAVIOR_WINDOW_DAYS + 1,
-  filters?: DriverTripBehaviorFilters,
-): Promise<DriverDailyTripRow[]> {
+  schedulingDate: string,
+): Promise<DriverDailyTripRow | null> {
   let lastError: unknown;
   for (const table of TRIP_BEHAVIOR_TABLES) {
     try {
-      const sql = buildDailySql(table, driverId, limit, filters);
+      const sql = buildDailySql(table, driverId, 1, {
+        fromDate: schedulingDate,
+        toDate: schedulingDate,
+      });
       const rows = await runSql<Record<string, unknown>>(sql);
-      return rows.map(mapDailyRow);
+      return rows.length > 0 ? mapDailyRow(rows[0]) : null;
     } catch (err) {
       lastError = err;
       if (!isTableMissingError(err)) throw err;
@@ -251,56 +353,154 @@ export async function fetchDriverTripBehavior(
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
+async function fetchDriverTripBehaviorByDay(
+  driverId: string,
+  filters: DriverTripBehaviorFilters,
+): Promise<DriverTripBehaviorFetchResult> {
+  const fromDate = filters.fromDate;
+  const toDate = filters.toDate;
+  if (!fromDate || !toDate) {
+    return { rows: [] };
+  }
+
+  const dates = enumerateDates(fromDate, toDate);
+  const rows: DriverDailyTripRow[] = [];
+  const failedDates: string[] = [];
+
+  const chunkSize = 5;
+  for (let i = 0; i < dates.length; i += chunkSize) {
+    const chunk = dates.slice(i, i + chunkSize);
+    const batch = await Promise.all(
+      chunk.map(async (date) => {
+        try {
+          const row = await fetchSingleDayDailyRow(driverId, date);
+          return { date, row, failed: false as const };
+        } catch (err) {
+          if (isStoragePartitionError(err)) {
+            return { date, row: null, failed: true as const };
+          }
+          throw err;
+        }
+      }),
+    );
+
+    for (const item of batch) {
+      if (item.failed) {
+        failedDates.push(item.date);
+      } else if (item.row) {
+        rows.push(item.row);
+      }
+    }
+  }
+
+  rows.sort((a, b) => a.schedulingDate.localeCompare(b.schedulingDate));
+
+  if (failedDates.length === 0) {
+    return { rows };
+  }
+
+  const failedLabel =
+    failedDates.length <= 3
+      ? failedDates.join(", ")
+      : `${failedDates.slice(0, 2).join(", ")} and ${failedDates.length - 2} more`;
+
+  return {
+    rows,
+    partial: true,
+    failedDates,
+    warning: `Some days could not be loaded (${failedLabel}). Showing ${rows.length} of ${dates.length} days.`,
+  };
+}
+
+/**
+ * Fetches per-day trip behavior rollups for one driver from driver_trip_behavior_fact.
+ * Rows are ordered chronologically (oldest first).
+ * Default limit covers a 30-day window plus one spare row.
+ * Falls back to per-day queries when a multi-partition scan fails.
+ */
+export async function fetchDriverTripBehavior(
+  driverId: string,
+  limit = TRIP_BEHAVIOR_WINDOW_DAYS + 1,
+  filters?: DriverTripBehaviorFilters,
+): Promise<DriverTripBehaviorFetchResult> {
+  let lastError: unknown;
+  for (const table of TRIP_BEHAVIOR_TABLES) {
+    try {
+      const sql = buildDailySql(table, driverId, limit, filters);
+      const rows = await runSql<Record<string, unknown>>(sql);
+      return { rows: rows.map(mapDailyRow) };
+    } catch (err) {
+      lastError = err;
+      if (isTableMissingError(err)) continue;
+      if (isStoragePartitionError(err) && filters?.fromDate && filters?.toDate) {
+        return fetchDriverTripBehaviorByDay(driverId, filters);
+      }
+      throw err;
+    }
+  }
+
+  if (isStoragePartitionError(lastError) && filters?.fromDate && filters?.toDate) {
+    return fetchDriverTripBehaviorByDay(driverId, filters);
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 function buildTripDetailSelect(): string {
   return `
-      trip_id,
-      scheduling_date,
-      route_name,
-      route_code,
-      time_bucket,
-      vehicle_size,
-      vehicle_number,
-      bus_code,
-      trip_start_time,
-      trip_end_time,
-      actual_trip_start_time,
-      actual_trip_end_time,
-      actual_trip_duration_min,
-      distance_km_odo_trip,
-      kwh_per_km,
-      route_difficulty_score,
-      total_dms_events,
-      hard_braking_density_per_100km,
-      overspeed_density_per_100km,
-      distraction_density_per_100km,
-      fatigue_density_per_100km,
-      regen_ratio,
-      driver_star_count,
-      behavior_risk_flag,
-      peer_percentile,
-      driver_score_band`;
+      b.trip_id,
+      b.scheduling_date,
+      b.route_name,
+      b.route_code,
+      b.time_bucket,
+      b.vehicle_size,
+      b.vehicle_number,
+      b.bus_code,
+      b.trip_start_time,
+      b.trip_end_time,
+      b.actual_trip_start_time,
+      b.actual_trip_end_time,
+      b.actual_trip_duration_min,
+      b.distance_km_odo_trip,
+      b.kwh_per_km,
+      b.route_difficulty_score,
+      b.total_dms_events,
+      b.hard_braking_density_per_100km,
+      b.overspeed_density_per_100km,
+      b.distraction_density_per_100km,
+      b.fatigue_density_per_100km,
+      b.regen_ratio,
+      b.driver_star_count,
+      b.behavior_risk_flag,
+      b.peer_percentile,
+      b.driver_score_band,
+      c.contextual_driver_score`;
+}
+
+function buildTripDetailFrom(table: string): string {
+  return `${table} b ${resolveContextualJoin(table)}`;
 }
 
 function buildTripDetailSql(table: string, driverId: string, schedulingDate: string): string {
   return `
     SELECT${buildTripDetailSelect()}
-    FROM ${table}
-    WHERE driver_id = ${sqlStr(driverId)}
-      AND scheduling_date = ${sqlStr(schedulingDate)}
-    ORDER BY coalesce(actual_trip_start_time, trip_start_time) ASC
+    FROM ${buildTripDetailFrom(table)}
+    WHERE b.driver_id = ${sqlStr(driverId)}
+      AND b.scheduling_date = ${sqlStr(schedulingDate)}
+    ORDER BY coalesce(b.actual_trip_start_time, b.trip_start_time) ASC
   `;
 }
 
 function buildTripWindowSql(table: string, driverId: string, filters?: DriverTripBehaviorFilters): string {
-  const clauses = [`driver_id = ${sqlStr(driverId)}`];
-  if (filters?.fromDate) clauses.push(`scheduling_date >= ${sqlStr(filters.fromDate)}`);
-  if (filters?.toDate) clauses.push(`scheduling_date <= ${sqlStr(filters.toDate)}`);
+  const clauses = [`b.driver_id = ${sqlStr(driverId)}`];
+  if (filters?.fromDate) clauses.push(`b.scheduling_date >= ${sqlStr(filters.fromDate)}`);
+  if (filters?.toDate) clauses.push(`b.scheduling_date <= ${sqlStr(filters.toDate)}`);
 
   return `
     SELECT${buildTripDetailSelect()}
-    FROM ${table}
+    FROM ${buildTripDetailFrom(table)}
     WHERE ${clauses.join(" AND ")}
-    ORDER BY scheduling_date ASC, coalesce(actual_trip_start_time, trip_start_time) ASC
+    ORDER BY b.scheduling_date ASC, coalesce(b.actual_trip_start_time, b.trip_start_time) ASC
   `;
 }
 
@@ -331,7 +531,9 @@ function mapTripDetailRow(row: Record<string, unknown>): DriverTripDetailRow {
     regenRatio: num(row.regen_ratio),
     driverStarCount: Math.round(num(row.driver_star_count)),
     behaviorRiskFlag: str(row.behavior_risk_flag),
-    peerPercentile: Math.round(num(row.peer_percentile) * 100),
+    contextualDriverScore:
+      row.contextual_driver_score == null ? null : +num(row.contextual_driver_score).toFixed(1),
+    drivingScore: Math.round(num(row.peer_percentile) * 100),
     driverScoreBand: str(row.driver_score_band),
   };
 }
@@ -339,22 +541,40 @@ function mapTripDetailRow(row: Record<string, unknown>): DriverTripDetailRow {
 /**
  * Fetches trip-level behavior rows for one driver on a single scheduling_date.
  * Rows are ordered by trip start time (actual when available).
+ * Storage/partition failures return an empty row set with a user-facing message.
  */
 export async function fetchDriverTripsForDay(
   driverId: string,
   schedulingDate: string,
-): Promise<DriverTripDetailRow[]> {
+): Promise<DriverTripsForDayResult> {
   let lastError: unknown;
   for (const table of TRIP_BEHAVIOR_TABLES) {
     try {
       const sql = buildTripDetailSql(table, driverId, schedulingDate);
       const rows = await runSql<Record<string, unknown>>(sql);
-      return rows.map(mapTripDetailRow);
+      return { rows: rows.map(mapTripDetailRow) };
     } catch (err) {
       lastError = err;
-      if (!isTableMissingError(err)) throw err;
+      if (isTableMissingError(err)) continue;
+      if (isStoragePartitionError(err)) {
+        return {
+          rows: [],
+          storageError: true,
+          message: friendlyStorageErrorMessage(err),
+        };
+      }
+      throw err;
     }
   }
+
+  if (isStoragePartitionError(lastError)) {
+    return {
+      rows: [],
+      storageError: true,
+      message: friendlyStorageErrorMessage(lastError),
+    };
+  }
+
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
@@ -398,9 +618,10 @@ export async function fetchDriverTripDetailsForExport(
   driverId: string,
   dailyRows: DriverDailyTripRow[],
   window?: DriverTripBehaviorFilters,
-): Promise<DriverTripDetailRow[]> {
+): Promise<DriverTripExportResult> {
   const dates = [...new Set(dailyRows.map((r) => r.schedulingDate))].sort();
   const collected: DriverTripDetailRow[] = [];
+  const failedDates: string[] = [];
 
   const chunkSize = 5;
   for (let i = 0; i < dates.length; i += chunkSize) {
@@ -408,9 +629,18 @@ export async function fetchDriverTripDetailsForExport(
     const batch = await Promise.all(
       chunk.map(async (date) => {
         try {
-          return await fetchDriverTripsForDay(driverId, date);
-        } catch {
-          return [] as DriverTripDetailRow[];
+          const result = await fetchDriverTripsForDay(driverId, date);
+          if (result.storageError) {
+            failedDates.push(date);
+            return [] as DriverTripDetailRow[];
+          }
+          return result.rows;
+        } catch (err) {
+          if (isStoragePartitionError(err)) {
+            failedDates.push(date);
+            return [] as DriverTripDetailRow[];
+          }
+          throw err;
         }
       }),
     );
@@ -418,12 +648,24 @@ export async function fetchDriverTripDetailsForExport(
   }
 
   if (collected.length > 0) {
-    return sortTripDetails(collected);
+    return {
+      rows: sortTripDetails(collected),
+      partial: failedDates.length > 0,
+      failedDates: failedDates.length > 0 ? failedDates : undefined,
+    };
   }
 
   if (window) {
-    return fetchDriverTripDetails(driverId, window);
+    try {
+      const rows = await fetchDriverTripDetails(driverId, window);
+      return { rows };
+    } catch (err) {
+      if (isStoragePartitionError(err)) {
+        return { rows: [], partial: true, failedDates: dates };
+      }
+      throw err;
+    }
   }
 
-  return [];
+  return { rows: [], partial: failedDates.length > 0, failedDates };
 }

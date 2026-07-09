@@ -83,19 +83,21 @@ function mapRowToEntry(row: Record<string, unknown>, index: number): DriverLeade
   const driverId = str(row.driver_id) ?? `mart-driver-${index}`;
   const driverName = str(row.driver_name) ?? `Driver ${index + 1}`;
   const peerPercentile = num(row.peer_percentile);
-  const score = row.score == null ? peerPercentile * 100 : num(row.score);
+  const driverScore = row.score == null ? null : num(row.score);
+  const drivingScore = Math.round(peerPercentile * 100);
+  const contextualScore = driverScore ?? drivingScore;
 
   return {
     driver_id: driverId,
     driver_name: driverName,
     company_name: str(row.company_name) ?? "—",
     trips_30d: num(row.trips_driven),
-    contextual_score: +score.toFixed(1),
-    percentile: Math.round(peerPercentile * 100),
+    contextual_score: +contextualScore.toFixed(1),
+    percentile: drivingScore,
     efficiency_kwh_per_km: num(row.efficiency),
     efficiency_delta_pct: +(trendDirection(scoreTrend) * Math.abs(num(row.score_trend, 0))).toFixed(1),
     difficulty_exposure: num(row.exposure),
-    risk_band: mapBand(str(row.score_band), score),
+    risk_band: mapBand(str(row.score_band), contextualScore),
     harsh_braking: num(row.braking_density),
     harsh_accel: 0,
     overspeed: num(row.overspeed_density),
@@ -103,7 +105,7 @@ function mapRowToEntry(row: Record<string, unknown>, index: number): DriverLeade
     drowsiness: num(row.fatigue_density),
     seatbelt_violation: 0,
     phone_use: 0,
-    score_evolution: synthEvolution(score, scoreTrend),
+    score_evolution: synthEvolution(contextualScore, scoreTrend),
     extras: {
       rank: row.rank == null ? null : Math.round(num(row.rank)),
       snapshotDate: str(row.snapshot_date),
