@@ -25,7 +25,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { cn } from "@/lib/utils";
 import { canAccessDataSync, clearCurrentUser, getCurrentUser, type AuthUser } from "@/lib/auth";
 
-type NavLink = { to: string; label: string };
+type NavLink = { to: string; label: string; comingSoon?: boolean };
 
 const NAV_OPERATIONS: NavLink[] = [
   { to: "/", label: "Trip Efficiency" },
@@ -35,19 +35,19 @@ const NAV_OPERATIONS: NavLink[] = [
   { to: "/battery-cycles", label: "Operational Efficiency" },
 ];
 
-const NAV_FLEET: NavLink[] = [{ to: "/fleet", label: "Fleet Command" }];
-
 const NAV_CHARGING: NavLink[] = [
-  { to: "/charging", label: "Command Center" },
-  { to: "/intelligence", label: "Charging Intelligence" },
+  { to: "/charging", label: "Command Center", comingSoon: true },
+  { to: "/intelligence", label: "Charging Intelligence", comingSoon: true },
 ];
 
 const NAV_OTHER: NavLink[] = [
-  { to: "/launcher", label: "App Launcher" },
-  { to: "/mis", label: "Daily reports" },
-  { to: "/readiness", label: "Site Readiness" },
+  { to: "/launcher", label: "App Launcher", comingSoon: true },
+  { to: "/mis", label: "Daily reports", comingSoon: true },
   { to: "/data-sync", label: "Data Sync" },
 ];
+
+const NAV_READINESS: NavLink = { to: "/readiness", label: "Site Readiness" };
+const NAV_ESG: NavLink = { to: "/esg", label: "ESG" };
 
 function isActive(path: string, to: string) {
   if (to === "/") return path === "/";
@@ -58,15 +58,59 @@ function isGroupActive(path: string, items: NavLink[]) {
   return items.some((n) => isActive(path, n.to));
 }
 
+function ComingSoonBadge({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn(
+        "rounded px-1 py-px text-[8.5px] font-semibold uppercase tracking-wide text-destructive",
+        "bg-destructive/10 ring-1 ring-inset ring-destructive/25",
+        className,
+      )}
+    >
+      Soon
+    </span>
+  );
+}
+
+/** Disabled nav item — no navigation, small “Soon” note. */
+function ComingSoonNavItem({ label }: { label: string }) {
+  return (
+    <span
+      title="Coming soon"
+      aria-disabled="true"
+      className="inline-flex shrink-0 cursor-not-allowed items-center gap-1.5 rounded-lg px-2.5 py-2 text-[12px] font-medium text-muted-foreground/55"
+    >
+      {label}
+      <ComingSoonBadge />
+    </span>
+  );
+}
+
 function NavDropdown({
   label,
   items,
   path,
+  comingSoon = false,
 }: {
   label: string;
   items: NavLink[];
   path: string;
+  comingSoon?: boolean;
 }) {
+  if (comingSoon) {
+    return (
+      <span
+        title="Coming soon"
+        aria-disabled="true"
+        className="inline-flex shrink-0 cursor-not-allowed items-center gap-1 rounded-lg px-2.5 py-2 text-[12px] font-medium text-muted-foreground/55"
+      >
+        {label}
+        <ChevronDown className="h-3 w-3 opacity-40" />
+        <ComingSoonBadge />
+      </span>
+    );
+  }
+
   const active = isGroupActive(path, items);
   return (
     <DropdownMenu>
@@ -85,13 +129,24 @@ function NavDropdown({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-[200px]">
-        {items.map((item) => (
-          <DropdownMenuItem key={item.to} asChild>
-            <Link to={item.to} className="w-full cursor-pointer">
+        {items.map((item) =>
+          item.comingSoon ? (
+            <DropdownMenuItem
+              key={item.to}
+              disabled
+              className="cursor-not-allowed justify-between opacity-60"
+            >
               {item.label}
-            </Link>
-          </DropdownMenuItem>
-        ))}
+              <ComingSoonBadge />
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem key={item.to} asChild>
+              <Link to={item.to} className="w-full cursor-pointer">
+                {item.label}
+              </Link>
+            </DropdownMenuItem>
+          ),
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -103,18 +158,30 @@ function MobileNavGroup({ title, items, path }: { title: string; items: NavLink[
       <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         {title}
       </div>
-      {items.map((n) => (
-        <Link
-          key={n.to}
-          to={n.to}
-          className={cn(
-            "block rounded-lg px-3 py-2.5 text-[13px] font-medium",
-            isActive(path, n.to) ? "nav-pill-active" : "text-muted-foreground",
-          )}
-        >
-          {n.label}
-        </Link>
-      ))}
+      {items.map((n) =>
+        n.comingSoon ? (
+          <span
+            key={n.to}
+            title="Coming soon"
+            aria-disabled="true"
+            className="flex cursor-not-allowed items-center justify-between rounded-lg px-3 py-2.5 text-[13px] font-medium text-muted-foreground/55"
+          >
+            {n.label}
+            <ComingSoonBadge />
+          </span>
+        ) : (
+          <Link
+            key={n.to}
+            to={n.to}
+            className={cn(
+              "block rounded-lg px-3 py-2.5 text-[13px] font-medium",
+              isActive(path, n.to) ? "nav-pill-active" : "text-muted-foreground",
+            )}
+          >
+            {n.label}
+          </Link>
+        ),
+      )}
     </div>
   );
 }
@@ -194,37 +261,50 @@ export function AppNav() {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {NAV_FLEET.map((n) => (
-            <Link
-              key={n.to}
-              to={n.to}
-              className={cn(
-                "shrink-0 rounded-lg px-2.5 py-2 text-[12px] font-medium",
-                isActive(path, n.to)
-                  ? "nav-pill-active"
-                  : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-              )}
-            >
-              {n.label}
-            </Link>
-          ))}
+          <Link
+            to={NAV_READINESS.to}
+            className={cn(
+              "shrink-0 rounded-lg px-2.5 py-2 text-[12px] font-medium",
+              isActive(path, NAV_READINESS.to)
+                ? "nav-pill-active"
+                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+            )}
+          >
+            {NAV_READINESS.label}
+          </Link>
 
-          <NavDropdown label="Charging" items={NAV_CHARGING} path={path} />
+          <Link
+            to={NAV_ESG.to}
+            className={cn(
+              "shrink-0 rounded-lg px-2.5 py-2 text-[12px] font-medium",
+              isActive(path, NAV_ESG.to)
+                ? "nav-pill-active"
+                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+            )}
+          >
+            {NAV_ESG.label}
+          </Link>
 
-          {navOther.map((n) => (
-            <Link
-              key={n.to}
-              to={n.to}
-              className={cn(
-                "shrink-0 rounded-lg px-2.5 py-2 text-[12px] font-medium",
-                isActive(path, n.to)
-                  ? "nav-pill-active"
-                  : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-              )}
-            >
-              {n.label}
-            </Link>
-          ))}
+          <NavDropdown label="Charging" items={NAV_CHARGING} path={path} comingSoon />
+
+          {navOther.map((n) =>
+            n.comingSoon ? (
+              <ComingSoonNavItem key={n.to} label={n.label} />
+            ) : (
+              <Link
+                key={n.to}
+                to={n.to}
+                className={cn(
+                  "shrink-0 rounded-lg px-2.5 py-2 text-[12px] font-medium",
+                  isActive(path, n.to)
+                    ? "nav-pill-active"
+                    : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                )}
+              >
+                {n.label}
+              </Link>
+            ),
+          )}
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
@@ -305,7 +385,7 @@ export function AppNav() {
       {mobileOpen && (
         <nav className="border-t border-border/50 px-4 py-3 lg:hidden">
           <MobileNavGroup title="Operations" items={NAV_OPERATIONS} path={path} />
-          <MobileNavGroup title="Fleet" items={NAV_FLEET} path={path} />
+          <MobileNavGroup title="Site" items={[NAV_READINESS, NAV_ESG]} path={path} />
           <MobileNavGroup title="Charging" items={NAV_CHARGING} path={path} />
           <MobileNavGroup title="More" items={navOther} path={path} />
           <button

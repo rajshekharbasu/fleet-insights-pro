@@ -36,3 +36,4 @@ Fleet Insights Pro/
 *.njsproj
 *.sln
 *.sw?
+.vercel

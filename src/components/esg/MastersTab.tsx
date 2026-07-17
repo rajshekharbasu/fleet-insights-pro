@@ -1,0 +1,121 @@
+import { useMemo, useState } from "react";
+import { BookMarked, CircleHelp, Settings2, Timer } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { GLOSSARY, TYPE_MASTER } from "@/lib/esg-data";
+import { A, PanelCard, EmptyState } from "./primitives";
+
+/** Masters: the configurable substrate — type lead-windows, glossary, open scope questions. */
+export function MastersTab() {
+  const [q, setQ] = useState("");
+  const terms = useMemo(
+    () =>
+      Object.entries(GLOSSARY)
+        .filter(([k, v]) => (k + v.full + (v.note ?? "")).toLowerCase().includes(q.toLowerCase()))
+        .sort(([a], [b]) => a.localeCompare(b)),
+    [q],
+  );
+
+  return (
+    <div className="grid items-start gap-4 xl:grid-cols-2">
+      <PanelCard>
+        <div className="border-b border-border/60 px-5 py-3.5">
+          <h3 className="flex items-center gap-2 text-[15px] font-semibold tracking-tight">
+            <Timer className="h-4 w-4 text-primary" aria-hidden /> Compliance type master
+          </h3>
+          <p className="text-[12px] text-muted-foreground">
+            Renewal lead windows are per type — a fire <A t="NOC" /> and an <A t="ISO" /> certificate warrant different warning horizons. These
+            windows drive every alert.
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[460px] text-[12.5px]">
+            <thead>
+              <tr className="border-b border-border/60 text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+                <th className="px-5 py-2.5 text-left font-medium">Type</th>
+                <th className="px-3 py-2.5 text-left font-medium">Category</th>
+                <th className="px-3 py-2.5 text-right font-medium">Lead window</th>
+                <th className="px-5 py-2.5 text-left font-medium">Default owner</th>
+              </tr>
+            </thead>
+            <tbody>
+              {TYPE_MASTER.map((t) => (
+                <tr key={t.key} className="border-b border-border/40 last:border-0">
+                  <td className="px-5 py-2.5 font-medium">
+                    <A t={t.label.split(" ")[0]} />
+                    {t.label.includes(" ") ? ` ${t.label.slice(t.label.indexOf(" ") + 1)}` : ""}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      {t.category === "permit" ? "Permit" : "Site"}
+                    </span>
+                  </td>
+                  <td className="num px-3 py-2.5 text-right font-semibold">{t.leadDays === 0 ? "—" : `${t.leadDays}d`}</td>
+                  <td className="px-5 py-2.5 text-[12px] text-muted-foreground">{t.ownerRole}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </PanelCard>
+
+      <div className="space-y-4">
+        <PanelCard>
+          <div className="border-b border-border/60 px-5 py-3.5">
+            <h3 className="flex items-center gap-2 text-[15px] font-semibold tracking-tight">
+              <BookMarked className="h-4 w-4 text-primary" aria-hidden /> Acronym glossary
+            </h3>
+            <p className="text-[12px] text-muted-foreground">
+              One definition source feeds every dotted-underline popover across the module — defined once, reused everywhere.
+            </p>
+          </div>
+          <div className="border-b border-border/40 px-5 py-3">
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search terms…" className="h-9 bg-muted/40 text-[12.5px]" aria-label="Search glossary" />
+          </div>
+          {terms.length === 0 ? (
+            <EmptyState title="No matching terms" />
+          ) : (
+            <div className="max-h-[360px] divide-y divide-border/30 overflow-auto">
+              {terms.map(([k, v]) => (
+                <div key={k} className="flex items-baseline gap-3 px-5 py-2.5">
+                  <span className="num w-[74px] shrink-0 text-[12px] font-bold text-primary">{k}</span>
+                  <span>
+                    <span className="text-[12.5px] font-medium">{v.full}</span>
+                    {v.note && <span className="block text-[11px] leading-snug text-muted-foreground">{v.note}</span>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </PanelCard>
+
+        <PanelCard>
+          <div className="border-b border-border/60 px-5 py-3.5">
+            <h3 className="flex items-center gap-2 text-[15px] font-semibold tracking-tight">
+              <CircleHelp className="h-4 w-4 text-warning" aria-hidden /> Open scope questions
+            </h3>
+            <p className="text-[12px] text-muted-foreground">Carried from the BRD, on the record rather than silently resolved.</p>
+          </div>
+          <ul className="space-y-2 px-5 py-4 text-[12.5px] leading-relaxed">
+            {[
+              <>Entity list & hierarchy to be confirmed — it shapes every roll-up on the dashboard.</>,
+              <>
+                Vendor bulk documents: keep in-module or defer to a separate <A t="DMS" />? Phase 1 captures the compliance sheet either way.
+              </>,
+              <>
+                Asset-master integration for the adequacy assessments <A t="ESAP" /> references.
+              </>,
+              <>
+                <A t="ISO" /> 9001 certification is in progress — third certificate joins the register on award.
+              </>,
+            ].map((item, i) => (
+              <li key={i} className="flex gap-2.5">
+                <Settings2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="text-muted-foreground">{item}</span>
+              </li>
+            ))}
+          </ul>
+        </PanelCard>
+      </div>
+    </div>
+  );
+}

@@ -622,3 +622,18 @@
     margin: 12mm;
   }
 }
+
+/*
+ * border-beam ships four fixed hue palettes (colorful/mono/ocean/sunset) and
+ * no raw-color prop. CriticalBeam (esg/primitives.tsx) needs a single,
+ * unambiguous destructive red regardless of which palette it's fed, so this
+ * forces it: grayscale collapses any input hue, sepia gives a uniform base
+ * tone to rotate from, then hue-rotate/saturate lock it to var(--destructive).
+ * Verified empirically (headless canvas sampling) to converge every palette's
+ * source colors to the same rgb(~216,0,0) regardless of starting hue.
+ */
+.critical-beam-red::after,
+.critical-beam-red::before,
+.critical-beam-red [data-beam-bloom] {
+  filter: grayscale(1) sepia(1) hue-rotate(308deg) saturate(40) brightness(0.85) !important;
+}

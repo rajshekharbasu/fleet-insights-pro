@@ -2,12 +2,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Award, BadgeCheck, Brain, ChevronRight, Crown, FileSpreadsheet, GraduationCap, Loader2, Maximize2, ShieldAlert, Star,
+  Award, ChevronRight, Crown, FileSpreadsheet, GraduationCap, Loader2, Maximize2, ShieldAlert,
   TrendingDown, TrendingUp, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  Area, AreaChart, CartesianGrid, Line, LineChart,
+  Area, AreaChart, CartesianGrid,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { PageShell } from "@/components/layout/AppNav";
@@ -20,8 +20,15 @@ import {
   TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { DRIVERS, type DriverScore } from "@/lib/fleet-data";
-import { fetchDriverLeaderboard, type DriverLeaderboardExtras, type DriverLeaderboardEntry } from "@/lib/graphql/drivers";
+import type { DriverScore } from "@/lib/fleet-data";
+import {
+  ATTRIBUTE_PILLAR_MAX,
+  fetchDriverAttributeScoreMonths,
+  fetchDriverAttributeScores,
+  formatAttributeMonth,
+  type DriverAttributeLeaderboardEntry,
+  type DriverAttributeScoreRow,
+} from "@/lib/graphql/driver-attribute-score";
 import {
   computeTripBehaviorWindow,
   fetchDriverTripBehavior,
@@ -34,7 +41,7 @@ import {
 } from "@/lib/graphql/driver-trip-behavior";
 import { fetchFilterOptions } from "@/lib/graphql/filter-options";
 import { DEFAULT_FILTERS, type Filters } from "@/lib/analytics";
-import { exportDriverWorkbook } from "@/lib/export/driver-excel";
+import { exportAttributeScoreWorkbook } from "@/lib/export/driver-attribute-excel";
 import { exportDriverTrips } from "@/lib/export/driver-daily-excel";
 import { formatUtcTripDate, formatUtcTripDateShort, formatUtcTripTime } from "@/lib/driver-trip-datetime";
 
@@ -42,9 +49,9 @@ export const Route = createFileRoute("/drivers")({
   head: () => ({
     meta: [
       { title: "Driver Intelligence · Voltline" },
-      { name: "description", content: "Driver coaching, benchmarking and operational optimization." },
+      { name: "description", content: "Monthly Driver Attribute Score leaderboard — attendance, accidents, ADAS, energy and mobile." },
       { property: "og:title", content: "Driver Intelligence · Voltline" },
-      { property: "og:description", content: "Contextual driver scoring, behavior fingerprints and peer benchmarking." },
+      { property: "og:description", content: "Ranked by driver_attribute_score with full pillar mark breakdown." },
     ],
   }),
   component: DriverIntelligencePage,
@@ -125,82 +132,57 @@ function MiniStat({ label, value, unit, hint, tone = "default", onClick, active 
   );
 }
 
-type FilterKind = "incentive" | "review" | "coaching";
+type FilterKind = "excellent" | "weakness" | "poor";
 
 const FILTER_META: Record<FilterKind, { accent: string; tone: string; blurb: string; Icon: typeof Award }> = {
-  incentive: {
+  excellent: {
     accent: "var(--color-success)",
     tone: "text-success",
-    blurb: "Top performers qualifying for rewards this cycle.",
+    blurb: "Drivers rated Excellent on the monthly Attribute Score.",
     Icon: Award,
   },
-  review: {
-    accent: "var(--color-destructive)",
-    tone: "text-destructive",
-    blurb: "Drivers flagged for manual review and intervention.",
-    Icon: ShieldAlert,
-  },
-  coaching: {
+  weakness: {
     accent: "var(--color-warning)",
     tone: "text-warning",
-    blurb: "Drivers with an assigned coaching module in the queue.",
+    blurb: "Drivers with a dominant weakness and marks lost this month.",
     Icon: GraduationCap,
+  },
+  poor: {
+    accent: "var(--color-destructive)",
+    tone: "text-destructive",
+    blurb: "Drivers rated Poor — priority for review and coaching.",
+    Icon: ShieldAlert,
   },
 };
 
-function pctCell(v: number | null, alreadyPct = false): string {
-  if (v == null) return "—";
-  return `${fmt(alreadyPct ? v : v * 100, 0)}%`;
-}
-
-function TrendCell({ extras }: { extras: DriverLeaderboardExtras }) {
-  const dir = scoreTrendDir(extras);
-  if (dir > 0) return <span className="inline-flex items-center gap-1 text-success"><TrendingUp className="h-3.5 w-3.5" />Improving</span>;
-  if (dir < 0) return <span className="inline-flex items-center gap-1 text-destructive"><TrendingDown className="h-3.5 w-3.5" />Declining</span>;
-  return <span className="text-muted-foreground">Stable</span>;
-}
+const PILLAR_META: { key: keyof typeof ATTRIBUTE_PILLAR_MAX; label: string; color: string }[] = [
+  { key: "accidents", label: "Accidents", color: "#ef4444" },
+  { key: "soc", label: "soc/km", color: "#2dd4bf" },
+  { key: "adas", label: "ADAS", color: "#5B8CFF" },
+  { key: "attendance", label: "Attendance", color: "#f59e0b" },
+  { key: "mobile", label: "Mobile", color: "#a855f7" },
+  { key: "alcohol", label: "Alcohol", color: "#94a3b8" },
+];
 
 function FilterDetailPanel({
   filter, label, entries, onClose, onOpen,
 }: {
   filter: FilterKind;
   label: string;
-  entries: DriverLeaderboardEntry[];
+  entries: DriverAttributeLeaderboardEntry[];
   onClose: () => void;
-  onOpen: (d: DriverScore) => void;
+  onOpen: (d: DriverAttributeLeaderboardEntry) => void;
 }) {
   const meta = FILTER_META[filter];
-  const cols: { key: string; head: string; cell: (e: DriverLeaderboardEntry) => ReactNode; align?: string }[] =
-    filter === "incentive"
-      ? [
-          { key: "driverScore", head: "Driver score", cell: (e) => <span className="num">{fmt(e.contextual_score)}</span>, align: "text-right" },
-          { key: "drivingScore", head: "Driving score", cell: (e) => <span className="num">{e.percentile}%</span>, align: "text-right" },
-          { key: "band", head: "Band", cell: (e) => <ScoreBandBadge band={e.extras.rawScoreBand ?? e.risk_band} /> },
-          { key: "stars", head: "Stars/trip", cell: (e) => <span className="num">{e.extras.starsPerTripWeighted == null ? "—" : fmt(e.extras.starsPerTripWeighted, 2)}</span>, align: "text-right" },
-          { key: "trips", head: "Trips scored", cell: (e) => <span className="num">{e.extras.tripsScored ?? "—"}</span>, align: "text-right" },
-          { key: "eff", head: "Efficiency", cell: (e) => <span className="num">{fmt(e.efficiency_kwh_per_km, 2)}</span>, align: "text-right" },
-          { key: "trend", head: "Trend", cell: (e) => <TrendCell extras={e.extras} /> },
-        ]
-      : filter === "review"
-      ? [
-          { key: "driverScore", head: "Driver score", cell: (e) => <span className="num">{fmt(e.contextual_score)}</span>, align: "text-right" },
-          { key: "drivingScore", head: "Driving score", cell: (e) => <span className="num">{e.percentile}%</span>, align: "text-right" },
-          { key: "band", head: "Band", cell: (e) => <ScoreBandBadge band={e.extras.rawScoreBand ?? e.risk_band} /> },
-          { key: "risk", head: "Dominant risk", cell: (e) => <span className="capitalize">{e.extras.dominantRisk ?? "—"}</span> },
-          { key: "hr", head: "High-risk", cell: (e) => <span className="num">{pctCell(e.extras.highRiskRatio)}</span>, align: "text-right" },
-          { key: "fatigue", head: "Fatigue", cell: (e) => <span className="num">{e.extras.fatigueDensity == null ? "—" : fmt(e.extras.fatigueDensity, 2)}</span>, align: "text-right" },
-          { key: "trips", head: "Trips scored", cell: (e) => <span className="num">{e.extras.tripsScored ?? "—"}</span>, align: "text-right" },
-          { key: "trend", head: "Trend", cell: (e) => <TrendCell extras={e.extras} /> },
-        ]
-      : [
-          { key: "driverScore", head: "Driver score", cell: (e) => <span className="num">{fmt(e.contextual_score)}</span>, align: "text-right" },
-          { key: "drivingScore", head: "Driving score", cell: (e) => <span className="num">{e.percentile}%</span>, align: "text-right" },
-          { key: "band", head: "Band", cell: (e) => <ScoreBandBadge band={e.extras.rawScoreBand ?? e.risk_band} /> },
-          { key: "module", head: "Module", cell: (e) => <span>{e.extras.coachingModule ?? "—"}</span> },
-          { key: "trigger", head: "Trigger", cell: (e) => <span className="text-muted-foreground">{e.extras.coachingTrigger ?? "—"}</span> },
-          { key: "risk", head: "Dominant risk", cell: (e) => <span className="capitalize">{e.extras.dominantRisk ?? "—"}</span> },
-          { key: "hr", head: "High-risk", cell: (e) => <span className="num">{pctCell(e.extras.highRiskRatio)}</span>, align: "text-right" },
-        ];
+  const cols: { key: string; head: string; cell: (e: DriverAttributeLeaderboardEntry) => ReactNode; align?: string }[] = [
+    { key: "score", head: "Attribute score", cell: (e) => <span className="num">{fmt(e.attribute.totalAttributeScore)}</span>, align: "text-right" },
+    { key: "rating", head: "Rating", cell: (e) => <ScoreBandBadge band={e.attribute.rating} /> },
+    { key: "weak", head: "Weakness", cell: (e) => <span className="capitalize">{(e.attribute.dominantWeakness ?? "None").replace(/_/g, " ")}</span> },
+    { key: "lost", head: "Marks lost", cell: (e) => <span className="num">{fmt(e.attribute.marksLost, 0)}</span>, align: "text-right" },
+    { key: "trips", head: "Trips", cell: (e) => <span className="num">{e.attribute.tripsInMonth}</span>, align: "text-right" },
+    { key: "soc", head: "soc/km", cell: (e) => <span className="num">{fmt(e.attribute.socPerKm, 3)}</span>, align: "text-right" },
+    { key: "att", head: "Attendance", cell: (e) => <span className="num">{fmt(e.attribute.attendancePct, 0)}%</span>, align: "text-right" },
+  ];
 
   return (
     <section
@@ -256,7 +238,7 @@ function FilterDetailPanel({
                   className="cursor-pointer border-b border-border/40 transition-colors last:border-0 hover:bg-muted/40"
                 >
                   <td className="px-5 py-2.5 text-left">
-                    <span className="num font-semibold text-muted-foreground">{e.extras.rank ?? "—"}</span>
+                    <span className="num font-semibold text-muted-foreground">{e.attribute.rank ?? "—"}</span>
                   </td>
                   <td className="px-3 py-2.5">
                     <div className="font-medium text-foreground">{e.driver_name}</div>
@@ -275,23 +257,10 @@ function FilterDetailPanel({
   );
 }
 
-function scoreTrendDir(extras?: DriverLeaderboardExtras, fallbackDeltaPct = 0): number {
-  const t = extras?.scoreTrend;
-  if (t) {
-    if (/up|improv|better|rise|gain|pos/i.test(t)) return 1;
-    if (/down|declin|worse|drop|fall|neg/i.test(t)) return -1;
-    const n = Number(t);
-    if (Number.isFinite(n) && n !== 0) return Math.sign(n);
-    return 0;
-  }
-  return fallbackDeltaPct < 0 ? 1 : fallbackDeltaPct > 0 ? -1 : 0;
-}
-
-function DriverCard({ d, extras, onOpen }: {
-  d: DriverScore; extras?: DriverLeaderboardExtras; onOpen: () => void;
+function DriverCard({ d, onOpen }: {
+  d: DriverAttributeLeaderboardEntry; onOpen: () => void;
 }) {
-  const dir = scoreTrendDir(extras, d.efficiency_delta_pct);
-  const trendLabel = extras?.scoreTrend ? String(extras.scoreTrend) : dir > 0 ? "improving" : dir < 0 ? "declining" : "stable";
+  const a = d.attribute;
   return (
     <button
       type="button"
@@ -304,80 +273,74 @@ function DriverCard({ d, extras, onOpen }: {
             style={{ background: `color-mix(in oklab, ${BAND_COLOR[d.risk_band]} 18%, var(--color-card))`, color: BAND_COLOR[d.risk_band], boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${BAND_COLOR[d.risk_band]} 35%, transparent)` }}
           >
             {d.driver_name.split(" ").map((p) => p[0]).slice(0, 2).join("")}
-            {extras?.rank != null && (
-              <span className="absolute -left-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-foreground px-1 text-[9px] font-bold text-background">
-                {extras.rank}
-              </span>
-            )}
+            <span className="absolute -left-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-foreground px-1 text-[9px] font-bold text-background">
+              {a.rank}
+            </span>
           </div>
           <div>
             <div className="flex items-center gap-1.5">
               <span className="text-[13.5px] font-semibold tracking-tight">{d.driver_name}</span>
-              {extras?.incentiveEligible && <Award className="h-3 w-3 text-success" aria-label="Incentive eligible" />}
-              {extras?.reviewRequired && <ShieldAlert className="h-3 w-3 text-destructive" aria-label="Review required" />}
             </div>
-            <div className="text-[11px] text-muted-foreground">{d.company_name} · {d.trips_30d} trips</div>
+            <div className="text-[11px] text-muted-foreground">
+              {d.company_name} · {a.tripsInMonth} trips · {fmt(a.attendancePct, 0)}% att.
+            </div>
           </div>
         </div>
         <span className="rounded-md px-1.5 py-0.5 text-[10.5px] uppercase tracking-wider"
           style={{ background: `color-mix(in oklab, ${BAND_COLOR[d.risk_band]} 15%, transparent)`, color: BAND_COLOR[d.risk_band] }}>
-          {extras?.rawScoreBand ?? d.risk_band}
+          {a.rating}
         </span>
       </div>
-      <div className="mt-3 flex items-end justify-between">
+      <div className="mt-3 flex items-end justify-between gap-3">
         <div>
-          <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Driver score</div>
-          <div className="num text-[22px] font-semibold tracking-tight">{fmt(d.contextual_score)}</div>
-          <div className="text-[11px] num text-muted-foreground">driving {d.percentile}% · exposure {fmt(d.difficulty_exposure, 0)}</div>
+          <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Attribute score</div>
+          <div className="num text-[22px] font-semibold tracking-tight">{fmt(a.totalAttributeScore, 0)}</div>
+          <div className="text-[11px] num text-muted-foreground">
+            {a.marksLost > 0 ? `${fmt(a.marksLost, 0)} marks lost` : "Full marks"}
+            {a.dominantWeakness && a.dominantWeakness !== "None"
+              ? ` · ${a.dominantWeakness}`
+              : ""}
+          </div>
         </div>
-        <div className="h-10 w-24">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={d.score_evolution.map((v) => ({ v }))} margin={{ top: 2, bottom: 0, left: 0, right: 0 }}>
-              <defs>
-                <linearGradient id={`drv-${d.driver_id}`} x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="0%" stopColor={BAND_COLOR[d.risk_band]} stopOpacity={0.4} />
-                  <stop offset="100%" stopColor={BAND_COLOR[d.risk_band]} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <Area dataKey="v" type="monotone" stroke={BAND_COLOR[d.risk_band]} strokeWidth={1.4} fill={`url(#drv-${d.driver_id})`} isAnimationActive={false} />
-            </AreaChart>
-          </ResponsiveContainer>
+        <div className="text-right text-[11px] text-muted-foreground">
+          <div className="num text-foreground">{fmt(a.socPerKm, 3)}</div>
+          <div>soc/km</div>
         </div>
-      </div>
-      <div className="mt-3 flex items-center justify-between text-[11px]">
-        <span className={`num inline-flex items-center gap-1 ${dir > 0 ? "text-success" : dir < 0 ? "text-destructive" : "text-muted-foreground"}`}>
-          {dir > 0 ? <TrendingUp className="h-3 w-3" /> : dir < 0 ? <TrendingDown className="h-3 w-3" /> : null}
-          {fmt(d.efficiency_kwh_per_km, 2)} kWh/km
-        </span>
-        <span className="text-[10.5px] capitalize text-muted-foreground">{trendLabel.replace(/_/g, " ")}</span>
       </div>
     </button>
   );
 }
 
 function DriverIntelligencePage() {
-  const [open, setOpen] = useState<DriverScore | null>(null);
-  const [sort, setSort] = useState<"score" | "efficiency" | "exposure">("score");
-  const [filter, setFilter] = useState<"incentive" | "review" | "coaching" | null>(null);
-  const [exporting, setExporting] = useState(false);
+  const [open, setOpen] = useState<DriverAttributeLeaderboardEntry | null>(null);
+  const [sort, setSort] = useState<"score" | "efficiency" | "trips">("score");
+  const [filter, setFilter] = useState<FilterKind | null>(null);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [selectedMonth, setSelectedMonth] = useState<{ year: number; month: number } | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const { data: filterOptions } = useQuery({
     queryKey: ["filter_options"],
     queryFn: fetchFilterOptions,
   });
 
+  const { data: months } = useQuery({
+    queryKey: ["driver_attribute_score_months"],
+    queryFn: fetchDriverAttributeScoreMonths,
+  });
+
+  const activeMonth = selectedMonth ?? (months?.[0] ? { year: months[0].year, month: months[0].month } : null);
+
   const { data: liveEntries, isLoading, error } = useQuery({
-    queryKey: ["mart_driver_leaderboard"],
-    queryFn: () => fetchDriverLeaderboard(50),
+    queryKey: ["driver_attribute_score", activeMonth?.year, activeMonth?.month],
+    queryFn: () => fetchDriverAttributeScores(activeMonth!.year, activeMonth!.month, 200),
+    enabled: !!activeMonth,
   });
 
   const usingLive = (liveEntries?.length ?? 0) > 0;
-  const allDrivers: DriverScore[] = usingLive ? liveEntries! : DRIVERS;
+  const allDrivers: DriverAttributeLeaderboardEntry[] = usingLive ? liveEntries! : [];
 
-  // The leaderboard is a snapshot, so Company/Driver filtering is applied
-  // client-side over the returned rows.
-  const drivers: DriverScore[] = useMemo(
+  const drivers = useMemo(
     () =>
       allDrivers.filter((d) => {
         if (filters.companies.length && !filters.companies.includes(d.company_name)) return false;
@@ -387,123 +350,122 @@ function DriverIntelligencePage() {
     [allDrivers, filters.companies, filters.drivers],
   );
 
-  const extrasById = useMemo(
-    () => new Map((liveEntries ?? []).map((e) => [e.driver_id, e.extras])),
-    [liveEntries],
-  );
-
   const sorted = useMemo(() => {
     const arr = [...drivers];
     if (sort === "score") {
-      if (usingLive) {
-        arr.sort(
-          (a, b) =>
-            (extrasById.get(a.driver_id)?.rank ?? Number.POSITIVE_INFINITY) -
-            (extrasById.get(b.driver_id)?.rank ?? Number.POSITIVE_INFINITY),
-        );
-      } else {
-        arr.sort((a, b) => b.contextual_score - a.contextual_score);
-      }
+      arr.sort((a, b) => a.attribute.rank - b.attribute.rank);
     }
-    if (sort === "efficiency") arr.sort((a, b) => a.efficiency_kwh_per_km - b.efficiency_kwh_per_km);
-    if (sort === "exposure") arr.sort((a, b) => b.difficulty_exposure - a.difficulty_exposure);
+    if (sort === "efficiency") arr.sort((a, b) => a.attribute.socPerKm - b.attribute.socPerKm);
+    if (sort === "trips") arr.sort((a, b) => b.attribute.tripsInMonth - a.attribute.tripsInMonth);
     return arr;
-  }, [sort, drivers, usingLive, extrasById]);
+  }, [sort, drivers]);
 
-  const elite = drivers.filter((d) => d.risk_band === "Elite").length;
-  const critical = drivers.filter((d) => d.risk_band === "Critical" || d.risk_band === "At-risk").length;
-  const avgScore = drivers.length ? drivers.reduce((s, d) => s + d.contextual_score, 0) / drivers.length : 0;
-  const avgEff = drivers.length ? drivers.reduce((s, d) => s + d.efficiency_kwh_per_km, 0) / drivers.length : 0;
+  const excellentCount = drivers.filter((d) => /excellent/i.test(d.attribute.rating)).length;
+  const poorCount = drivers.filter((d) => /poor/i.test(d.attribute.rating)).length;
+  const weaknessCount = drivers.filter(
+    (d) => d.attribute.dominantWeakness && d.attribute.dominantWeakness !== "None" && d.attribute.marksLost > 0,
+  ).length;
+  const avgScore = drivers.length
+    ? drivers.reduce((s, d) => s + d.attribute.totalAttributeScore, 0) / drivers.length
+    : 0;
+  const avgSoc = drivers.length
+    ? drivers.reduce((s, d) => s + d.attribute.socPerKm, 0) / drivers.length
+    : 0;
 
-  const incentiveCount = (liveEntries ?? []).filter((e) => e.extras.incentiveEligible).length;
-  const reviewCount = (liveEntries ?? []).filter((e) => e.extras.reviewRequired).length;
-  const coachingCount = (liveEntries ?? []).filter((e) => e.extras.coachingModule).length;
+  const toggleFilter = (f: FilterKind) => setFilter((prev) => (prev === f ? null : f));
 
-  const toggleFilter = (f: "incentive" | "review" | "coaching") =>
-    setFilter((prev) => (prev === f ? null : f));
+  const FILTER_LABEL: Record<FilterKind, string> = {
+    excellent: "Excellent",
+    weakness: "Has weakness",
+    poor: "Poor rating",
+  };
+
+  const filterMatches = useMemo(() => {
+    if (!usingLive || !filter) return [] as DriverAttributeLeaderboardEntry[];
+    const list = drivers.filter((e) => {
+      if (filter === "excellent") return /excellent/i.test(e.attribute.rating);
+      if (filter === "poor") return /poor/i.test(e.attribute.rating);
+      return !!(e.attribute.dominantWeakness && e.attribute.dominantWeakness !== "None" && e.attribute.marksLost > 0);
+    });
+    return list.sort((a, b) => a.attribute.rank - b.attribute.rank);
+  }, [drivers, filter, usingLive]);
+
+  const monthLabel = activeMonth
+    ? formatAttributeMonth(activeMonth.year, activeMonth.month)
+    : "—";
 
   async function handleExport() {
     if (exporting) return;
-    const rows = liveEntries ?? [];
-    if (rows.length === 0) {
-      toast.error("No driver data to export yet.");
+    const rows = drivers;
+    if (!activeMonth || rows.length === 0) {
+      toast.error("No attribute scores to export for this month.");
       return;
     }
     setExporting(true);
     try {
-      await exportDriverWorkbook(rows);
-      toast.success(`Exported ${rows.length} drivers to Excel.`);
+      await exportAttributeScoreWorkbook(rows, activeMonth.year, activeMonth.month);
+      toast.success(`Exported ${rows.length} drivers · ${monthLabel}`);
     } catch (err) {
-      console.error("Excel export failed", err);
+      console.error("Attribute score export failed", err);
       toast.error("Excel export failed. Check the console for details.");
     } finally {
       setExporting(false);
     }
   }
 
-  const FILTER_LABEL: Record<"incentive" | "review" | "coaching", string> = {
-    incentive: "Incentive eligible",
-    review: "Needs review",
-    coaching: "Coaching queue",
-  };
-
-  const filterMatches = useMemo(() => {
-    if (!usingLive || !filter) return [] as DriverLeaderboardEntry[];
-    const list = (liveEntries ?? []).filter((e) => {
-      if (filter === "incentive") return e.extras.incentiveEligible;
-      if (filter === "review") return e.extras.reviewRequired;
-      return !!e.extras.coachingModule;
-    });
-    return list.sort(
-      (a, b) =>
-        (a.extras.rank ?? Number.POSITIVE_INFINITY) - (b.extras.rank ?? Number.POSITIVE_INFINITY),
-    );
-  }, [liveEntries, filter, usingLive]);
-
   return (
     <PageShell
-      eyebrow="Live"
+      eyebrow={`MBMT · Attribute Score · ${monthLabel}`}
       title="Driver Intelligence"
-      description="Contextual driver scoring, behavior fingerprints and peer benchmarking — calibrated to route difficulty."
+      description="Monthly Driver Attribute Score — attendance, accidents, ADAS behaviour, energy efficiency, mobile & alcohol."
       meta={
-        usingLive ? (
-          <button
-            onClick={handleExport}
-            disabled={exporting}
-            className="inline-flex items-center gap-2 rounded-xl border border-success/30 bg-success/10 px-4 py-2.5 text-[13px] font-medium text-success shadow-elevated transition-all hover:-translate-y-0.5 hover:bg-success/15 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
-            {exporting ? "Preparing…" : "Export to Excel"}
-          </button>
-        ) : undefined
+        <button
+          type="button"
+          onClick={() => void handleExport()}
+          disabled={exporting || !usingLive}
+          className="inline-flex items-center gap-2 rounded-xl border border-success/30 bg-success/10 px-4 py-2.5 text-[13px] font-medium text-success shadow-elevated transition-all hover:-translate-y-0.5 hover:bg-success/15 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+          {exporting ? "Preparing…" : "Download report"}
+        </button>
       }
     >
-      <FilterBar
-        filters={filters}
-        onChange={setFilters}
-        options={filterOptions}
-        show={{ date: false, company: true, driver: true, route: false, vehicle: false }}
-      />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <FilterBar
+          filters={filters}
+          onChange={setFilters}
+          options={filterOptions}
+          show={{ date: false, company: true, driver: true, route: false, vehicle: false }}
+        />
+        {months && months.length > 0 && (
+          <div className="flex items-center gap-1 rounded-xl border border-border/60 bg-card/70 p-1">
+            {months.map((m) => {
+              const active = activeMonth?.year === m.year && activeMonth?.month === m.month;
+              return (
+                <button
+                  key={`${m.year}-${m.month}`}
+                  type="button"
+                  onClick={() => setSelectedMonth({ year: m.year, month: m.month })}
+                  className={`rounded-lg px-2.5 py-1.5 text-[11.5px] font-medium transition-colors ${
+                    active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {m.label}
+                  <span className="ml-1 opacity-70">({m.count})</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* A. Command center */}
       <section className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-        {usingLive ? (
-          <>
-            <MiniStat label="Avg driver score" value={fmt(avgScore)} unit="/100" hint="Contextual · route-adjusted" />
-            <MiniStat label="Incentive eligible" value={String(incentiveCount)} tone="success" hint="Top performers" onClick={() => toggleFilter("incentive")} active={filter === "incentive"} />
-            <MiniStat label="Needs review" value={String(reviewCount)} tone="destructive" hint="Coaching priority" onClick={() => toggleFilter("review")} active={filter === "review"} />
-            <MiniStat label="Fleet efficiency" value={fmt(avgEff, 2)} unit="kWh/km" hint="Avg of leaderboard" />
-            <MiniStat label="Coaching queue" value={String(coachingCount)} tone="warning" hint="Modules assigned" onClick={() => toggleFilter("coaching")} active={filter === "coaching"} />
-          </>
-        ) : (
-          <>
-            <MiniStat label="Avg score" value={fmt(avgScore)} unit="/100" hint="Route-normalized" />
-            <MiniStat label="Elite drivers" value={String(elite)} tone="success" hint="Top tier" />
-            <MiniStat label="High-risk" value={String(critical)} tone="destructive" hint="Coaching priority" />
-            <MiniStat label="Fleet efficiency" value={fmt(avgEff, 2)} unit="kWh/km" />
-            <MiniStat label="Coaching slots" value={String(Math.max(3, Math.round(critical * 1.5)))} tone="warning" hint="Auto-scheduled" />
-          </>
-        )}
+        <MiniStat label="Avg attribute score" value={fmt(avgScore, 0)} unit="/100" hint={`${drivers.length} scored drivers`} />
+        <MiniStat label="Excellent" value={String(excellentCount)} tone="success" hint="Top rating" onClick={() => toggleFilter("excellent")} active={filter === "excellent"} />
+        <MiniStat label="Has weakness" value={String(weaknessCount)} tone="warning" hint="Marks lost this month" onClick={() => toggleFilter("weakness")} active={filter === "weakness"} />
+        <MiniStat label="Poor" value={String(poorCount)} tone="destructive" hint="Priority review" onClick={() => toggleFilter("poor")} active={filter === "poor"} />
+        <MiniStat label="Avg soc/km" value={fmt(avgSoc, 3)} hint="Fleet energy intensity" />
       </section>
 
       {/* A2. Card drill-down */}
@@ -522,36 +484,40 @@ function DriverIntelligencePage() {
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-[16px] font-semibold tracking-tight">Driver leaderboard</h2>
+              <h2 className="text-[16px] font-semibold tracking-tight">Attribute score leaderboard</h2>
               {usingLive && (
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success ring-1 ring-inset ring-success/20">
-                  GraphQL
+                  driver_attribute_score
                 </span>
               )}
               {!usingLive && error && (
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive ring-1 ring-inset ring-destructive/20">
-                  Offline fallback
+                  Failed to load
                 </span>
               )}
             </div>
             <p className="text-[12.5px] text-muted-foreground">
-              {usingLive
-                ? "Ranked by composite driver score from driver leaderboard. Click a driver for the deep dive."
-                : "Click a driver for the deep dive or add to behavior comparison."}
+              Ranked by monthly Attribute Score ({monthLabel}). Click a driver for pillar breakdown.
             </p>
           </div>
-          <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-card/70 p-0.5">
-            {(["score", "efficiency", "exposure"] as const).map((s) => (
-              <button
-                key={s}
-                onClick={() => setSort(s)}
-                className={`rounded-md px-2.5 py-1 text-[11.5px] capitalize transition-colors ${
-                  sort === s ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {s}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-card/70 p-0.5">
+              {([
+                ["score", "Rank"],
+                ["efficiency", "soc/km"],
+                ["trips", "Trips"],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setSort(key)}
+                  className={`rounded-md px-2.5 py-1 text-[11.5px] transition-colors ${
+                    sort === key ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -563,18 +529,22 @@ function DriverIntelligencePage() {
                 <DriverCard
                   key={d.driver_id}
                   d={d}
-                  extras={extrasById.get(d.driver_id)}
                   onOpen={() => setOpen(d)}
                 />
               ))}
         </div>
+        {!isLoading && !usingLive && !error && (
+          <p className="py-8 text-center text-[13px] text-muted-foreground">
+            No attribute scores for {monthLabel}.
+          </p>
+        )}
       </section>
 
       {/* D. Peer benchmarking */}
       <section>
         <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-elevated">
           <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-[15px] font-semibold tracking-tight">Peer benchmarking</h3>
+            <h3 className="text-[15px] font-semibold tracking-tight">Top scores · {monthLabel}</h3>
             <Award className="h-4 w-4 text-primary" />
           </div>
           <div className="grid grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2">
@@ -583,15 +553,15 @@ function DriverIntelligencePage() {
                 <div className="flex items-center justify-between text-[12px]">
                   <span className="flex items-center gap-2">
                     {i === 0 && <Crown className="h-3 w-3 text-warning" />}
-                    <span className="truncate">{d.driver_name}</span>
+                    <span className="truncate">#{d.attribute.rank} {d.driver_name}</span>
                   </span>
-                  <span className="num text-muted-foreground">{fmt(d.contextual_score)} / {d.percentile}%</span>
+                  <span className="num text-muted-foreground">{fmt(d.attribute.totalAttributeScore, 0)} · {d.attribute.rating}</span>
                 </div>
                 <div className="h-1.5 overflow-hidden rounded-full bg-muted/40">
                   <div
                     className="h-full rounded-full"
                     style={{
-                      width: `${d.percentile}%`,
+                      width: `${d.attribute.totalAttributeScore}%`,
                       background: `linear-gradient(90deg, ${BAND_COLOR[d.risk_band]}, color-mix(in oklab, ${BAND_COLOR[d.risk_band]} 40%, transparent))`,
                     }}
                   />
@@ -602,51 +572,32 @@ function DriverIntelligencePage() {
         </div>
       </section>
 
-      {/* E. Coaching */}
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {sorted
-          .filter((d) => d.contextual_score < 70)
-          .slice(0, 3)
-          .map((d) => (
-            <InsightCard
-              key={d.driver_id}
-              icon={GraduationCap}
-              tone={d.contextual_score < 50 ? "destructive" : "warning"}
-              tag={d.driver_name.split(" ")[0]}
-              title={
-                d.harsh_braking > d.distraction
-                  ? `${d.driver_name}: high braking intensity on congestion-heavy routes`
-                  : `${d.driver_name}: distraction spikes on peak-hour difficult routes`
-              }
-              body={`Contextual score ${fmt(d.contextual_score)} · exposure ${fmt(d.difficulty_exposure)}. Recommend 2-session coaching focused on ${
-                d.harsh_braking > d.distraction ? "regen-aware deceleration" : "attentional reset routines"
-              }.`}
-            />
-          ))}
-        {sorted
-          .filter((d) => d.risk_band === "Elite")
-          .slice(0, 2)
-          .map((d) => (
-            <InsightCard
-              key={d.driver_id}
-              icon={BadgeCheck}
-              tone="success"
-              tag={d.driver_name.split(" ")[0]}
-              title={`${d.driver_name} sustains elite efficiency on high-altitude routes`}
-              body={`Use as benchmark for cohort training; pair as mentor for two at-risk drivers in the same depot.`}
-            />
-          ))}
-        <InsightCard
-          icon={Brain}
-          title="Cohort-level pattern: peak-hour distraction"
-          body="Distraction events rise 38% during 5–7 PM across at-risk drivers. Push proactive nudges 10 minutes before departure."
-        />
+      {/* E. Coaching from weakness */}
+      <section className="space-y-3">
+        <h2 className="text-[16px] font-semibold tracking-tight">Coaching from attribute weakness</h2>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {sorted
+            .filter((d) => d.attribute.marksLost > 0 && d.attribute.dominantWeakness && d.attribute.dominantWeakness !== "None")
+            .slice(0, 6)
+            .map((d) => (
+              <InsightCard
+                key={d.driver_id}
+                icon={GraduationCap}
+                tone={d.attribute.totalAttributeScore < 60 ? "destructive" : "warning"}
+                tag={d.attribute.rating}
+                title={d.driver_name}
+                body={`Attribute ${fmt(d.attribute.totalAttributeScore, 0)}/100 · dominant weakness: ${d.attribute.dominantWeakness} (−${fmt(d.attribute.weaknessMarksLost, 0)} marks).`}
+              />
+            ))}
+          {sorted.every((d) => !d.attribute.marksLost || !d.attribute.dominantWeakness || d.attribute.dominantWeakness === "None") && (
+            <p className="text-[13px] text-muted-foreground col-span-full">No coaching flags for this month — all eligible drivers clean, or no weakness labelled.</p>
+          )}
+        </div>
       </section>
 
       {open && (
         <DriverDrawer
           d={open}
-          extras={extrasById.get(open.driver_id)}
           usingLive={usingLive}
           onClose={() => setOpen(null)}
         />
@@ -654,6 +605,8 @@ function DriverIntelligencePage() {
     </PageShell>
   );
 }
+
+/* Trip behaviour tables below — unchanged; drawer uses attribute breakdown. */
 
 function tripRouteLabel(t: DriverTripDetailRow): string {
   return t.routeName ?? "—";
@@ -1249,7 +1202,7 @@ function DriverDailyTripsSection({
   driverId: string;
   driverName: string;
   enabled: boolean;
-  extras?: DriverLeaderboardExtras;
+  extras?: { windowEndDate?: string | null; snapshotDate?: string | null };
 }) {
   const [exporting, setExporting] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -1443,15 +1396,47 @@ function DriverDailyTripsSection({
   );
 }
 
+function lastDayOfMonth(year: number, month: number): string {
+  const d = new Date(Date.UTC(year, month, 0));
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${mm}-${dd}`;
+}
+
+function pillarOutcome(a: DriverAttributeScoreRow, key: keyof typeof ATTRIBUTE_PILLAR_MAX): string {
+  switch (key) {
+    case "accidents":
+      if (a.majorAccidentCount > 0) return `${a.majorAccidentCount} major → hard zero`;
+      if (a.accidentCount === 0) return "No accidents";
+      return `${a.accidentCount} minor accident${a.accidentCount === 1 ? "" : "s"}`;
+    case "soc":
+      return a.socExcessPct <= 0
+        ? `At/below route avg (${fmt(a.socPerKm, 3)} soc/km)`
+        : `${fmt(a.socExcessPct, 1)}% above route avg`;
+    case "adas":
+      return `Brake ${fmt(a.hardBrakingScore, 1)}/7 · Accel ${fmt(a.hardAccelScore, 0)}/7 · Seatbelt ${fmt(a.seatbeltScore, 0)}/6`;
+    case "attendance":
+      return `${fmt(a.attendancePct, 1)}% of ${a.workingDays}-day month`;
+    case "mobile":
+      return `${a.mobileEvents} phone event${a.mobileEvents === 1 ? "" : "s"}`;
+    case "alcohol":
+      return "Placeholder — full marks";
+    default:
+      return "";
+  }
+}
+
 function DriverDrawer({
-  d, extras, usingLive, onClose,
+  d, usingLive, onClose,
 }: {
-  d: DriverScore;
-  extras?: DriverLeaderboardExtras;
+  d: DriverAttributeLeaderboardEntry;
   usingLive: boolean;
   onClose: () => void;
 }) {
-  const evo = d.score_evolution.map((v, i) => ({ wk: `W${i + 1}`, score: v }));
+  const a = d.attribute;
+  const monthLabel = formatAttributeMonth(a.year, a.month);
+  const tripAnchor = lastDayOfMonth(a.year, a.month);
+
   return (
     <>
       <div className="fixed inset-0 z-40 bg-background/70 backdrop-blur-sm animate-fade-in" onClick={onClose} />
@@ -1465,8 +1450,8 @@ function DriverDrawer({
             <div>
               <div className="text-[15px] font-semibold tracking-tight">{d.driver_name}</div>
               <div className="flex flex-wrap items-center gap-1.5 text-[11.5px] text-muted-foreground">
-                <span>{d.company_name} · {d.trips_30d} trips · {fmt(d.contextual_score)} / {d.percentile}%</span>
-                <ScoreBandBadge band={extras?.rawScoreBand ?? d.risk_band} />
+                <span>#{a.rank} · {d.company_name} · {monthLabel} · {a.tripsInMonth} trips</span>
+                <ScoreBandBadge band={a.rating} />
               </div>
             </div>
           </div>
@@ -1477,133 +1462,94 @@ function DriverDrawer({
         <div className="space-y-5 p-5">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
-              <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Driver score</div>
-              <div className="num text-[22px] font-semibold">{fmt(d.contextual_score)}</div>
-              <div className="text-[10px] text-muted-foreground">Contextual · route-adjusted</div>
+              <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Attribute score</div>
+              <div className="num text-[22px] font-semibold">{fmt(a.totalAttributeScore, 0)}</div>
+              <div className="text-[10px] text-muted-foreground">/ 100 · monthly</div>
             </div>
             <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
-              <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Driving score</div>
-              <div className="num text-[22px] font-semibold">{d.percentile}%</div>
-              <div className="text-[10px] text-muted-foreground">Peer-ranked performance</div>
+              <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Rating</div>
+              <div className="mt-1"><ScoreBandBadge band={a.rating} size="md" /></div>
             </div>
             <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
-              <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Score band</div>
-              <div className="mt-1">
-                <ScoreBandBadge band={extras?.rawScoreBand ?? d.risk_band} size="md" />
-              </div>
+              <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Marks lost</div>
+              <div className="num text-[22px] font-semibold">{fmt(a.marksLost, 0)}</div>
+              <div className="text-[10px] text-muted-foreground truncate">{a.dominantWeakness ?? "None"}</div>
             </div>
             <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
-              <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Efficiency</div>
-              <div className="num text-[22px] font-semibold">{fmt(d.efficiency_kwh_per_km, 2)}</div>
-              <div className="text-[10px] text-muted-foreground">exposure {fmt(d.difficulty_exposure, 0)}</div>
+              <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">soc/km</div>
+              <div className="num text-[22px] font-semibold">{fmt(a.socPerKm, 3)}</div>
+              <div className="text-[10px] text-muted-foreground">{fmt(a.kmInMonth, 0)} km</div>
             </div>
           </div>
-          {extras && (
-            <div className="rounded-xl border border-border/60 bg-muted/15 p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Coaching & risk</div>
-                <div className="flex items-center gap-1.5">
-                  {extras.incentiveEligible && (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success">
-                      <Award className="h-3 w-3" /> Incentive
-                    </span>
-                  )}
-                  {extras.reviewRequired && (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
-                      <ShieldAlert className="h-3 w-3" /> Review
-                    </span>
-                  )}
-                </div>
+
+          <div className="rounded-xl border border-border/60 bg-muted/15 p-4">
+            <div className="mb-3 text-[10.5px] uppercase tracking-wider text-muted-foreground">
+              How marks were calculated · {monthLabel}
+            </div>
+            <div className="space-y-3">
+              {PILLAR_META.map((p) => {
+                const marks = a.pillars[p.key];
+                const max = ATTRIBUTE_PILLAR_MAX[p.key];
+                const pct = max > 0 ? Math.min(100, (marks / max) * 100) : 0;
+                return (
+                  <div key={p.key}>
+                    <div className="mb-1 flex items-center justify-between text-[12px]">
+                      <span className="font-medium">{p.label}</span>
+                      <span className="num text-muted-foreground">
+                        {fmt(marks, marks % 1 === 0 ? 0 : 1)}
+                        <span className="text-muted-foreground/70"> / {max}</span>
+                      </span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-muted/40">
+                      <div className="h-full rounded-full" style={{ width: `${pct}%`, background: p.color }} />
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">{pillarOutcome(a, p.key)}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-4 flex items-center justify-between border-t border-border/50 pt-3 text-[13px]">
+              <span className="text-muted-foreground">Sum of pillars</span>
+              <span className="num text-[16px] font-semibold">{fmt(a.totalAttributeScore, 0)} / 100</span>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border/60 bg-muted/15 p-4">
+            <div className="mb-3 text-[10.5px] uppercase tracking-wider text-muted-foreground">Month activity</div>
+            <div className="grid grid-cols-2 gap-2 text-[12px]">
+              <div className="flex items-center justify-between rounded-lg bg-muted/25 px-2.5 py-1.5">
+                <span className="text-muted-foreground">Attendance</span>
+                <span className="num font-medium">{fmt(a.attendancePct, 0)}%</span>
               </div>
-              <div className="grid grid-cols-2 gap-2 text-[12px]">
-                {extras.dominantRisk && (
-                  <div className="col-span-2 flex items-center justify-between rounded-lg bg-muted/25 px-2.5 py-1.5">
-                    <span className="text-muted-foreground">Dominant risk</span>
-                    <span className="font-medium capitalize">{extras.dominantRisk.replace(/_/g, " ")}</span>
-                  </div>
-                )}
-                {extras.coachingModule && (
-                  <div className="col-span-2 flex items-center justify-between rounded-lg bg-muted/25 px-2.5 py-1.5">
-                    <span className="text-muted-foreground">Coaching module</span>
-                    <span className="font-medium capitalize">{extras.coachingModule.replace(/_/g, " ")}</span>
-                  </div>
-                )}
-                {extras.coachingTrigger && (
-                  <div className="col-span-2 rounded-lg bg-muted/25 px-2.5 py-1.5">
-                    <div className="text-muted-foreground">Trigger</div>
-                    <div className="mt-0.5 text-[11.5px] font-medium capitalize">{extras.coachingTrigger.replace(/_/g, " ")}</div>
-                  </div>
-                )}
-                {extras.starsPerTripWeighted != null && (
-                  <div className="flex items-center justify-between rounded-lg bg-muted/25 px-2.5 py-1.5">
-                    <span className="inline-flex items-center gap-1 text-muted-foreground"><Star className="h-3 w-3" /> Stars/trip</span>
-                    <span className="num font-medium">{fmt(extras.starsPerTripWeighted, 2)}</span>
-                  </div>
-                )}
-                {extras.highRiskRatio != null && (
-                  <div className="flex items-center justify-between rounded-lg bg-muted/25 px-2.5 py-1.5">
-                    <span className="text-muted-foreground">High-risk</span>
-                    <span className="num font-medium">{fmt(extras.highRiskRatio * 100, 0)}%</span>
-                  </div>
-                )}
-                {extras.peerScoreCoveragePct != null && (
-                  <div className="flex items-center justify-between rounded-lg bg-muted/25 px-2.5 py-1.5">
-                    <span className="text-muted-foreground">Peer coverage</span>
-                    <span className="num font-medium">{fmt(extras.peerScoreCoveragePct, 0)}%</span>
-                  </div>
-                )}
-                {extras.tripsScored != null && (
-                  <div className="flex items-center justify-between rounded-lg bg-muted/25 px-2.5 py-1.5">
-                    <span className="text-muted-foreground">Trips scored</span>
-                    <span className="num font-medium">{extras.tripsScored}</span>
-                  </div>
-                )}
+              <div className="flex items-center justify-between rounded-lg bg-muted/25 px-2.5 py-1.5">
+                <span className="text-muted-foreground">Duties</span>
+                <span className="num font-medium">{a.dutiesInMonth}</span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg bg-muted/25 px-2.5 py-1.5">
+                <span className="text-muted-foreground">Trips</span>
+                <span className="num font-medium">{a.tripsInMonth}</span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg bg-muted/25 px-2.5 py-1.5">
+                <span className="text-muted-foreground">Routes</span>
+                <span className="num font-medium">{a.routesDriven}</span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg bg-muted/25 px-2.5 py-1.5">
+                <span className="text-muted-foreground">Accidents</span>
+                <span className="num font-medium">{a.accidentCount} ({a.majorAccidentCount} major)</span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg bg-muted/25 px-2.5 py-1.5">
+                <span className="text-muted-foreground">Mobile events</span>
+                <span className="num font-medium">{a.mobileEvents}</span>
               </div>
             </div>
-          )}
-          <div>
-            <div className="mb-2 text-[10.5px] uppercase tracking-wider text-muted-foreground">12-week score evolution</div>
-            <div className="h-40">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={evo} margin={{ top: 6, right: 6, left: -16, bottom: 0 }}>
-                  <CartesianGrid stroke="var(--color-border)" strokeDasharray="3 3" vertical={false} opacity={0.5} />
-                  <XAxis dataKey="wk" tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }} axisLine={false} tickLine={false} domain={[20, 100]} />
-                  <Tooltip contentStyle={{ background: "var(--color-popover)", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 12 }} />
-                  <Line type="monotone" dataKey="score" stroke={BAND_COLOR[d.risk_band]} strokeWidth={2} dot={false} isAnimationActive={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
           </div>
-          <div>
-            <div className="mb-2 text-[10.5px] uppercase tracking-wider text-muted-foreground">Behavior fingerprint</div>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                ["Harsh braking", d.harsh_braking, "var(--color-destructive)"],
-                ["Harsh accel", d.harsh_accel, "var(--color-warning)"],
-                ["Overspeed", d.overspeed, "var(--color-chart-3)"],
-                ["Distraction", d.distraction, "var(--color-chart-4)"],
-                ["Drowsiness", d.drowsiness, "var(--color-chart-2)"],
-                ["Phone use", d.phone_use, "var(--color-chart-5)"],
-              ].map(([k, v, c]) => (
-                <div key={k as string} className="rounded-lg border border-border/60 bg-muted/20 p-2.5">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="text-muted-foreground">{k as string}</span>
-                    <span className="num">{fmt(v as number)}</span>
-                  </div>
-                  <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted/50">
-                    <div className="h-full rounded-full" style={{ width: `${Math.min(100, (v as number) * 2)}%`, background: c as string }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+
           {usingLive && (
             <DriverDailyTripsSection
               driverId={d.driver_id}
               driverName={d.driver_name}
               enabled={usingLive}
-              extras={extras}
+              extras={{ windowEndDate: tripAnchor, snapshotDate: tripAnchor }}
             />
           )}
         </div>

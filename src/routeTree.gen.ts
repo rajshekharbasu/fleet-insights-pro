@@ -17,10 +17,12 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as LauncherRouteImport } from './routes/launcher'
 import { Route as IntelligenceRouteImport } from './routes/intelligence'
 import { Route as FleetRouteImport } from './routes/fleet'
+import { Route as EsgRouteImport } from './routes/esg'
 import { Route as DriversRouteImport } from './routes/drivers'
 import { Route as DataSyncRouteImport } from './routes/data-sync'
 import { Route as ChargingRouteImport } from './routes/charging'
 import { Route as BatteryCyclesRouteImport } from './routes/battery-cycles'
+import { Route as AttributeScoreRouteImport } from './routes/attribute-score'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ReadinessIndexRouteImport } from './routes/readiness.index'
 import { Route as ReadinessOpsRouteImport } from './routes/readiness.ops'
@@ -67,6 +69,11 @@ const FleetRoute = FleetRouteImport.update({
   path: '/fleet',
   getParentRoute: () => rootRouteImport,
 } as any)
+const EsgRoute = EsgRouteImport.update({
+  id: '/esg',
+  path: '/esg',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DriversRoute = DriversRouteImport.update({
   id: '/drivers',
   path: '/drivers',
@@ -85,6 +92,11 @@ const ChargingRoute = ChargingRouteImport.update({
 const BatteryCyclesRoute = BatteryCyclesRouteImport.update({
   id: '/battery-cycles',
   path: '/battery-cycles',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AttributeScoreRoute = AttributeScoreRouteImport.update({
+  id: '/attribute-score',
+  path: '/attribute-score',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -115,10 +127,12 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/attribute-score': typeof AttributeScoreRoute
   '/battery-cycles': typeof BatteryCyclesRoute
   '/charging': typeof ChargingRoute
   '/data-sync': typeof DataSyncRoute
   '/drivers': typeof DriversRoute
+  '/esg': typeof EsgRoute
   '/fleet': typeof FleetRoute
   '/intelligence': typeof IntelligenceRoute
   '/launcher': typeof LauncherRoute
@@ -134,10 +148,12 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/attribute-score': typeof AttributeScoreRoute
   '/battery-cycles': typeof BatteryCyclesRoute
   '/charging': typeof ChargingRoute
   '/data-sync': typeof DataSyncRoute
   '/drivers': typeof DriversRoute
+  '/esg': typeof EsgRoute
   '/fleet': typeof FleetRoute
   '/intelligence': typeof IntelligenceRoute
   '/launcher': typeof LauncherRoute
@@ -153,10 +169,12 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/attribute-score': typeof AttributeScoreRoute
   '/battery-cycles': typeof BatteryCyclesRoute
   '/charging': typeof ChargingRoute
   '/data-sync': typeof DataSyncRoute
   '/drivers': typeof DriversRoute
+  '/esg': typeof EsgRoute
   '/fleet': typeof FleetRoute
   '/intelligence': typeof IntelligenceRoute
   '/launcher': typeof LauncherRoute
@@ -174,10 +192,12 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/attribute-score'
     | '/battery-cycles'
     | '/charging'
     | '/data-sync'
     | '/drivers'
+    | '/esg'
     | '/fleet'
     | '/intelligence'
     | '/launcher'
@@ -193,10 +213,12 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/attribute-score'
     | '/battery-cycles'
     | '/charging'
     | '/data-sync'
     | '/drivers'
+    | '/esg'
     | '/fleet'
     | '/intelligence'
     | '/launcher'
@@ -211,10 +233,12 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/attribute-score'
     | '/battery-cycles'
     | '/charging'
     | '/data-sync'
     | '/drivers'
+    | '/esg'
     | '/fleet'
     | '/intelligence'
     | '/launcher'
@@ -231,10 +255,12 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AttributeScoreRoute: typeof AttributeScoreRoute
   BatteryCyclesRoute: typeof BatteryCyclesRoute
   ChargingRoute: typeof ChargingRoute
   DataSyncRoute: typeof DataSyncRoute
   DriversRoute: typeof DriversRoute
+  EsgRoute: typeof EsgRoute
   FleetRoute: typeof FleetRoute
   IntelligenceRoute: typeof IntelligenceRoute
   LauncherRoute: typeof LauncherRoute
@@ -304,6 +330,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FleetRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/esg': {
+      id: '/esg'
+      path: '/esg'
+      fullPath: '/esg'
+      preLoaderRoute: typeof EsgRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/drivers': {
       id: '/drivers'
       path: '/drivers'
@@ -330,6 +363,13 @@ declare module '@tanstack/react-router' {
       path: '/battery-cycles'
       fullPath: '/battery-cycles'
       preLoaderRoute: typeof BatteryCyclesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/attribute-score': {
+      id: '/attribute-score'
+      path: '/attribute-score'
+      fullPath: '/attribute-score'
+      preLoaderRoute: typeof AttributeScoreRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -388,10 +428,12 @@ const ReadinessRouteWithChildren = ReadinessRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AttributeScoreRoute: AttributeScoreRoute,
   BatteryCyclesRoute: BatteryCyclesRoute,
   ChargingRoute: ChargingRoute,
   DataSyncRoute: DataSyncRoute,
   DriversRoute: DriversRoute,
+  EsgRoute: EsgRoute,
   FleetRoute: FleetRoute,
   IntelligenceRoute: IntelligenceRoute,
   LauncherRoute: LauncherRoute,
