@@ -99,6 +99,14 @@ export const GLOSSARY: Record<string, { full: string; note?: string }> = {
   tCO2e: { full: "Tonnes of CO₂ equivalent" },
   SEBI: { full: "Securities and Exchange Board of India" },
   "O&M": { full: "Operations & Maintenance" },
+  NC: { full: "Non-Conformity", note: "An audit or monitoring finding outside a defined requirement." },
+  ESMP: { full: "Environmental & Social Management Plan", note: "Greenfield equivalent of the ESAP." },
+  IFC: { full: "International Finance Corporation", note: "Publishes the Performance Standards lenders benchmark against." },
+  DFI: { full: "Development Finance Institution", note: "Development lender whose requirements shape ESMS scope." },
+  "E&S": { full: "Environmental & Social" },
+  EHS: { full: "Environment, Health & Safety" },
+  CAPA: { full: "Corrective & Preventive Action", note: "The action a non-conformity is closed with." },
+  TNA: { full: "Training Needs Assessment" },
 };
 
 /* ------------------------------- type master ------------------------------ */
@@ -511,23 +519,121 @@ export function recordPlace(r: ComplianceRecord): string {
 
 /* ------------------------------- ESMS content ------------------------------ */
 
+/**
+ * A single uploaded revision of a policy. Approval of the latest version is the
+ * gate a policy must pass before its actions enter the ESAP register.
+ */
+export type PolicyVersion = {
+  version: string; // "v3.0"
+  uploadedAt: string;
+  uploadedBy: string; // person id
+  status: "draft" | "submitted" | "approved" | "rejected";
+  approvedBy?: string; // person id
+  approvedOn?: string;
+  doc: { name: string; size: string };
+};
+
 export type Policy = {
   id: string;
   name: string;
   entityId: string;
+  /** Convenience mirror of `currentVersion` — kept for existing list rendering. */
   version: string;
   status: "approved" | "under-review" | "draft";
   updated: string;
   ownerId: string;
+  currentVersion: string;
+  reviewDue: string; // annual review date
+  versions: PolicyVersion[];
 };
 
+const policyDoc = (name: string, version: string, size: string) => ({
+  name: `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${version}.pdf`,
+  size,
+});
+
 export const POLICIES: Policy[] = [
-  { id: "p-esg", name: "ESG Policy", entityId: "corp", version: "v3.0", status: "approved", updated: "2026-01-20", ownerId: "kavita" },
-  { id: "p-ehs", name: "Environment, Health & Safety Policy", entityId: "corp", version: "v2.4", status: "approved", updated: "2025-11-05", ownerId: "kavita" },
-  { id: "p-hr", name: "Human Rights & Labour Policy", entityId: "corp", version: "v1.2", status: "under-review", updated: "2026-06-28", ownerId: "kavita" },
-  { id: "p-grv", name: "Community Grievance Policy", entityId: "mbmt", version: "v1.0", status: "approved", updated: "2025-09-14", ownerId: "priya" },
-  { id: "p-sup", name: "Supplier Code of Conduct", entityId: "corp", version: "v1.1", status: "draft", updated: "2026-07-08", ownerId: "priya" },
+  {
+    id: "p-esg",
+    name: "ESG Policy",
+    entityId: "corp",
+    version: "v3.0",
+    status: "approved",
+    updated: "2026-01-20",
+    ownerId: "kavita",
+    currentVersion: "v3.0",
+    reviewDue: "2026-08-30", // inside the 60-day review window
+    versions: [
+      { version: "v3.0", uploadedAt: "2026-01-14", uploadedBy: "kavita", status: "approved", approvedBy: "kavita", approvedOn: "2026-01-20", doc: policyDoc("ESG Policy", "v3.0", "1.4 MB") },
+      { version: "v2.0", uploadedAt: "2025-01-10", uploadedBy: "kavita", status: "approved", approvedBy: "kavita", approvedOn: "2025-01-18", doc: policyDoc("ESG Policy", "v2.0", "1.2 MB") },
+      { version: "v1.0", uploadedAt: "2024-02-02", uploadedBy: "priya", status: "approved", approvedBy: "kavita", approvedOn: "2024-02-12", doc: policyDoc("ESG Policy", "v1.0", "980 KB") },
+    ],
+  },
+  {
+    id: "p-ehs",
+    name: "Environment, Health & Safety Policy",
+    entityId: "corp",
+    version: "v2.4",
+    status: "approved",
+    updated: "2025-11-05",
+    ownerId: "kavita",
+    currentVersion: "v2.4",
+    reviewDue: "2026-06-01", // overdue for annual review
+    versions: [
+      { version: "v2.4", uploadedAt: "2025-10-28", uploadedBy: "kavita", status: "approved", approvedBy: "kavita", approvedOn: "2025-11-05", doc: policyDoc("EHS Policy", "v2.4", "1.1 MB") },
+      { version: "v2.0", uploadedAt: "2024-10-20", uploadedBy: "priya", status: "approved", approvedBy: "kavita", approvedOn: "2024-11-02", doc: policyDoc("EHS Policy", "v2.0", "1.0 MB") },
+    ],
+  },
+  {
+    id: "p-hr",
+    name: "Human Rights & Labour Policy",
+    entityId: "corp",
+    version: "v1.2",
+    status: "under-review",
+    updated: "2026-06-28",
+    ownerId: "kavita",
+    currentVersion: "v1.1",
+    reviewDue: "2026-12-15",
+    versions: [
+      // v1.2 sits in review — the approved current version is still v1.1
+      { version: "v1.2", uploadedAt: "2026-06-28", uploadedBy: "priya", status: "submitted", doc: policyDoc("Human Rights Policy", "v1.2", "760 KB") },
+      { version: "v1.1", uploadedAt: "2025-06-10", uploadedBy: "kavita", status: "approved", approvedBy: "kavita", approvedOn: "2025-06-20", doc: policyDoc("Human Rights Policy", "v1.1", "740 KB") },
+      { version: "v1.0", uploadedAt: "2024-06-05", uploadedBy: "kavita", status: "approved", approvedBy: "kavita", approvedOn: "2024-06-14", doc: policyDoc("Human Rights Policy", "v1.0", "700 KB") },
+    ],
+  },
+  {
+    id: "p-grv",
+    name: "Community Grievance Policy",
+    entityId: "mbmt",
+    version: "v1.0",
+    status: "approved",
+    updated: "2025-09-14",
+    ownerId: "priya",
+    currentVersion: "v1.0",
+    reviewDue: "2026-09-14",
+    versions: [
+      { version: "v1.0", uploadedAt: "2025-09-06", uploadedBy: "priya", status: "approved", approvedBy: "kavita", approvedOn: "2025-09-14", doc: policyDoc("Community Grievance Policy", "v1.0", "540 KB") },
+    ],
+  },
+  {
+    id: "p-sup",
+    name: "Supplier Code of Conduct",
+    entityId: "corp",
+    version: "v1.0",
+    status: "under-review",
+    updated: "2026-07-08",
+    ownerId: "priya",
+    currentVersion: "v1.0",
+    reviewDue: "2027-01-31",
+    versions: [
+      // A brand-new policy awaiting its first approval — no approved version yet, so
+      // it is NOT in the ESAP register until an approver signs off.
+      { version: "v1.0", uploadedAt: "2026-07-08", uploadedBy: "priya", status: "submitted", doc: policyDoc("Supplier Code of Conduct", "v1.0", "600 KB") },
+    ],
+  },
 ];
+
+export const policyById = (id: string) => POLICIES.find((p) => p.id === id);
 
 export type Sop = {
   id: string;
@@ -608,21 +714,35 @@ export const ASSESSMENTS: Assessment[] = [
   },
 ];
 
+/**
+ * Where an ESAP action originated. ESAP is the convergence point for corrective
+ * actions from four sources — assessments, internal audits, external audits, and
+ * approved policies — so the action carries a discriminated source rather than a
+ * hard-bound assessment id. This keeps one action register instead of four.
+ */
+export type EsapSource =
+  | { kind: "assessment"; id: string } // ESDD / ESIA finding
+  | { kind: "internal-audit"; id: string } // AuditFinding id
+  | { kind: "external-audit"; id: string } // AuditFinding id
+  | { kind: "policy"; id: string }; // action arising from an approved policy
+
 export type EsapAction = {
   id: string;
-  assessmentId: string;
+  source: EsapSource;
   finding: string;
   action: string;
   ownerId: string;
   due: string;
   status: "open" | "in-progress" | "closed";
   closedOn?: string;
+  ncRef?: string; // human-readable NC number, e.g. "NC-2026-014"
+  severity?: "major" | "minor" | "observation";
 };
 
 export const ESAP_ACTIONS: EsapAction[] = [
   {
     id: "e-1",
-    assessmentId: "a-esdd-mbmt",
+    source: { kind: "assessment", id: "a-esdd-mbmt" },
     finding: "Fire safety adequacy — hydrant coverage short at Kashimira",
     action: "Install 2 additional hydrant points; re-run pressure test",
     ownerId: "rohan",
@@ -631,7 +751,7 @@ export const ESAP_ACTIONS: EsapAction[] = [
   },
   {
     id: "e-2",
-    assessmentId: "a-esdd-mbmt",
+    source: { kind: "assessment", id: "a-esdd-mbmt" },
     finding: "Stormwater & drainage — wash-bay runoff uncontained",
     action: "Construct interceptor channel + oil-water separator",
     ownerId: "arjun",
@@ -640,7 +760,7 @@ export const ESAP_ACTIONS: EsapAction[] = [
   },
   {
     id: "e-3",
-    assessmentId: "a-esia-silv",
+    source: { kind: "assessment", id: "a-esia-silv" },
     finding: "Green belt plan — 120 saplings pending vs. commitment",
     action: "Complete monsoon plantation drive, geo-tag saplings",
     ownerId: "priya",
@@ -649,7 +769,7 @@ export const ESAP_ACTIONS: EsapAction[] = [
   },
   {
     id: "e-4",
-    assessmentId: "a-esdd-mbmt",
+    source: { kind: "assessment", id: "a-esdd-mbmt" },
     finding: "Battery storage — quarantine bay signage & SOP display",
     action: "Install signage; laminate SOP at bay entrance",
     ownerId: "rohan",
@@ -659,7 +779,7 @@ export const ESAP_ACTIONS: EsapAction[] = [
   },
   {
     id: "e-5",
-    assessmentId: "a-esia-silv",
+    source: { kind: "assessment", id: "a-esia-silv" },
     finding: "Community consultation — grievance register digitisation",
     action: "Move paper register to shared tracker; monthly review",
     ownerId: "priya",
@@ -668,12 +788,35 @@ export const ESAP_ACTIONS: EsapAction[] = [
   },
   {
     id: "e-6",
-    assessmentId: "a-esdd-mbmt",
+    source: { kind: "assessment", id: "a-esdd-mbmt" },
     finding: "Labour — contractor PF/ESIC evidence collection",
     action: "Collect quarterly challans from all 4 contractors",
     ownerId: "sunil",
     due: "2026-09-30",
     status: "open",
+  },
+  // ---- audit-sourced corrective actions (seeded for Phase 3 / 4 backlinks) ----
+  {
+    id: "e-7",
+    source: { kind: "internal-audit", id: "af-int-2" },
+    finding: "ISO 14001 §8.1 — spill kit at wash bay not replenished after use",
+    action: "Restock spill kits; add monthly checklist to depot SOP",
+    ownerId: "rohan",
+    due: "2026-07-05",
+    status: "in-progress",
+    ncRef: "NC-2026-011",
+    severity: "minor",
+  },
+  {
+    id: "e-8",
+    source: { kind: "external-audit", id: "af-ext-2" },
+    finding: "ISO 45001 §7.2 — competence records incomplete for 3 charging-bay staff",
+    action: "Collect training evidence; update competence matrix",
+    ownerId: "kavita",
+    due: "2026-08-20",
+    status: "open",
+    ncRef: "NC-2026-014",
+    severity: "major",
   },
 ];
 
@@ -681,6 +824,411 @@ export function esapState(a: EsapAction): "closed" | "overdue" | "open" {
   if (a.status === "closed") return "closed";
   return daysUntil(a.due) < 0 ? "overdue" : "open";
 }
+
+/**
+ * Resolves an ESAP source into a display label and a deep-link target, so the
+ * register can render a backlink for any source without branching in the UI.
+ */
+export function esapSourceLabel(s: EsapSource): { label: string; area: string; sub: string; id: string } {
+  switch (s.kind) {
+    case "assessment": {
+      const a = ASSESSMENTS.find((x) => x.id === s.id);
+      return {
+        label: a ? `${a.kind} — ${a.project}` : "Assessment",
+        area: "esms",
+        sub: a?.kind === "ESIA" ? "esia" : "esdd",
+        id: s.id,
+      };
+    }
+    case "internal-audit": {
+      const f = AUDIT_FINDINGS.find((x) => x.id === s.id);
+      const audit = f ? AUDITS.find((x) => x.id === f.auditId) : undefined;
+      return {
+        label: audit ? `Internal audit — ${audit.title}` : "Internal audit",
+        area: "esms",
+        sub: "audit-internal",
+        id: audit?.id ?? s.id,
+      };
+    }
+    case "external-audit": {
+      const f = AUDIT_FINDINGS.find((x) => x.id === s.id);
+      const audit = f ? AUDITS.find((x) => x.id === f.auditId) : undefined;
+      return {
+        label: audit ? `External audit — ${audit.title}` : "External audit",
+        area: "esms",
+        sub: "audit-external",
+        id: audit?.id ?? s.id,
+      };
+    }
+    case "policy": {
+      const p = policyById(s.id);
+      return { label: p ? `Policy — ${p.name}` : "Policy", area: "esms", sub: "policies", id: s.id };
+    }
+  }
+}
+
+/** Entity an ESAP action rolls up to, resolved through its source. Used for scoping. */
+export function esapActionEntityId(a: EsapAction): string | undefined {
+  const s = a.source;
+  if (s.kind === "assessment") return ASSESSMENTS.find((x) => x.id === s.id)?.entityId;
+  if (s.kind === "policy") return policyById(s.id)?.entityId;
+  const f = AUDIT_FINDINGS.find((x) => x.id === s.id);
+  return f ? AUDITS.find((x) => x.id === f.auditId)?.entityId : undefined;
+}
+
+/**
+ * The rollout action a policy contributes to the ESAP register once its latest
+ * version is approved. Approval is the gate: an unapproved policy has no action.
+ * Pass live versions (session edits) or omit for the static baseline.
+ */
+export function policyEsapAction(p: Policy, versions: PolicyVersion[] = p.versions): EsapAction | null {
+  // The action tracks the most recent APPROVED version — so uploading a new draft
+  // does not drop an already-approved policy out of the register.
+  const approved = versions.find((v) => v.status === "approved");
+  if (!approved) return null;
+  return {
+    id: `pol-${p.id}`,
+    source: { kind: "policy", id: p.id },
+    finding: `${p.name} ${approved.version} approved`,
+    action: `Roll out ${p.name} ${approved.version} — brief owners, refresh linked SOPs & controls`,
+    ownerId: p.ownerId,
+    due: p.reviewDue,
+    status: "open",
+  };
+}
+
+/** Baseline policy-sourced ESAP actions from the static POLICIES data. */
+export function policyEsapActions(): EsapAction[] {
+  return POLICIES.map((p) => policyEsapAction(p)).filter((a): a is EsapAction => a !== null);
+}
+
+/* ---------------------------------- audits --------------------------------- */
+
+export type AuditKind = "internal" | "external";
+export type FindingResult = "compliant" | "nc" | "observation";
+
+export type AuditFinding = {
+  id: string;
+  auditId: string;
+  clause: string; // e.g. "ISO 14001 §8.1" or "Fire safety — hydrant coverage"
+  area: string; // functional area observed
+  result: FindingResult;
+  severity?: "major" | "minor";
+  remarks?: string; // MANDATORY when result === "nc"
+  actionId?: string; // link into ESAP_ACTIONS
+};
+
+export type Audit = {
+  id: string;
+  kind: AuditKind;
+  title: string;
+  entityId: string;
+  depotId?: string;
+  standard?: string; // "ISO 14001" | "ISO 45001" | internal programme
+  auditorName: string;
+  auditorOrg?: string; // external only
+  scheduledOn: string;
+  conductedOn?: string;
+  status: "planned" | "in-progress" | "closed";
+  recordId?: string; // certification record this audit maintains (external, ISO)
+  reportDoc?: { name: string; size: string; uploadedAt: string };
+};
+
+export const AUDITS: Audit[] = [
+  {
+    id: "aud-int-mbmt-q2",
+    kind: "internal",
+    title: "MBMT depot internal EHS audit — Q2",
+    entityId: "mbmt",
+    depotId: "kashimira",
+    standard: "ISO 14001 (internal programme)",
+    auditorName: "Priya Nair",
+    scheduledOn: "2026-06-18",
+    conductedOn: "2026-06-20",
+    status: "in-progress",
+    reportDoc: { name: "internal-audit-mbmt-q2.pdf", size: "1.3 MB", uploadedAt: "2026-06-24" },
+  },
+  {
+    id: "aud-int-silv-q2",
+    kind: "internal",
+    title: "Silvassa depot internal audit — Q2",
+    entityId: "silvassa",
+    depotId: "silvassa-depot",
+    standard: "ISO 14001 (internal programme)",
+    auditorName: "Kavita Rao",
+    scheduledOn: "2026-08-05",
+    status: "planned",
+  },
+  {
+    id: "aud-ext-iso45001",
+    kind: "external",
+    title: "ISO 45001 surveillance audit",
+    entityId: "corp",
+    standard: "ISO 45001",
+    auditorName: "R. Krishnan",
+    auditorOrg: "TÜV SÜD",
+    scheduledOn: "2026-06-30",
+    conductedOn: "2026-07-01",
+    status: "in-progress",
+    recordId: "r-iso45001",
+    reportDoc: { name: "tuv-iso45001-surveillance-2026.pdf", size: "2.0 MB", uploadedAt: "2026-07-04" },
+  },
+  {
+    id: "aud-ext-iso14001",
+    kind: "external",
+    title: "ISO 14001 recertification audit",
+    entityId: "corp",
+    standard: "ISO 14001",
+    auditorName: "S. Iyer",
+    auditorOrg: "TÜV SÜD",
+    scheduledOn: "2026-08-25",
+    status: "planned",
+    recordId: "r-iso14001",
+  },
+];
+
+export const AUDIT_FINDINGS: AuditFinding[] = [
+  // aud-int-mbmt-q2 — one compliant, one NC (linked, overdue action), one observation
+  {
+    id: "af-int-1",
+    auditId: "aud-int-mbmt-q2",
+    clause: "ISO 14001 §7.5 — documented information",
+    area: "Charging bay",
+    result: "compliant",
+  },
+  {
+    id: "af-int-2",
+    auditId: "aud-int-mbmt-q2",
+    clause: "ISO 14001 §8.1 — operational control",
+    area: "Wash bay",
+    result: "nc",
+    severity: "minor",
+    remarks: "Spill kit at wash bay found empty after last use; no replenishment log maintained.",
+    actionId: "e-7",
+  },
+  {
+    id: "af-int-3",
+    auditId: "aud-int-mbmt-q2",
+    clause: "ISO 14001 §9.1 — monitoring & measurement",
+    area: "Depot ops",
+    result: "observation",
+    remarks: "Noise readings recorded on paper; recommend moving to the monitoring register.",
+  },
+  {
+    // An NC with NO corrective action yet — surfaces the unlinked-NC warning.
+    id: "af-int-4",
+    auditId: "aud-int-mbmt-q2",
+    clause: "ISO 14001 §7.2 — competence & training",
+    area: "Battery workshop",
+    result: "nc",
+    severity: "minor",
+    remarks: "Two technicians handling HV batteries have lapsed certification.",
+  },
+  // aud-ext-iso45001 — one compliant, one NC (external, linked, open)
+  {
+    id: "af-ext-1",
+    auditId: "aud-ext-iso45001",
+    clause: "ISO 45001 §6.1 — hazard identification",
+    area: "HV workshop",
+    result: "compliant",
+  },
+  {
+    id: "af-ext-2",
+    auditId: "aud-ext-iso45001",
+    clause: "ISO 45001 §7.2 — competence",
+    area: "Charging bay",
+    result: "nc",
+    severity: "major",
+    remarks: "Training/competence evidence missing for 3 charging-bay operators.",
+    actionId: "e-8",
+  },
+];
+
+/* --------------------------------- training -------------------------------- */
+
+export type Attendee = { id: string; name: string; role: string; present: boolean };
+
+export type Training = {
+  id: string;
+  topic: string;
+  entityId: string;
+  depotId?: string;
+  scheduledAt: string; // ISO datetime — date AND time
+  durationMins: number;
+  trainerId: string; // person id
+  status: "scheduled" | "completed" | "cancelled";
+  attendees: Attendee[];
+  notes?: string;
+};
+
+const attendeesFrom = (present: number): Attendee[] =>
+  PEOPLE.map((p, i) => ({ id: p.id, name: p.name, role: p.role, present: i < present }));
+
+export const TRAININGS: Training[] = [
+  {
+    id: "tr-fire-jul",
+    topic: "Fire drill & evacuation refresher",
+    entityId: "mbmt",
+    depotId: "bhayandar",
+    scheduledAt: "2026-07-09T10:30:00+05:30",
+    durationMins: 90,
+    trainerId: "rohan",
+    status: "completed",
+    attendees: attendeesFrom(3), // partial attendance (3 of 5)
+    notes: "Two depot staff on leave; reschedule make-up session.",
+  },
+  {
+    id: "tr-battery-jul",
+    topic: "HV battery handling & spill response",
+    entityId: "mbmt",
+    depotId: "kashimira",
+    scheduledAt: "2026-07-24T14:00:00+05:30",
+    durationMins: 120,
+    trainerId: "kavita",
+    status: "scheduled",
+    attendees: attendeesFrom(0),
+  },
+  {
+    id: "tr-grievance-jun",
+    topic: "Community grievance handling",
+    entityId: "silvassa",
+    depotId: "silvassa-depot",
+    scheduledAt: "2026-06-19T11:00:00+05:30",
+    durationMins: 60,
+    trainerId: "priya",
+    status: "completed",
+    attendees: attendeesFrom(5), // full attendance
+  },
+];
+
+/* ----------------------------- site monitoring ----------------------------- */
+
+export type MonitoringCategory = "air" | "water" | "noise" | "waste";
+
+export type MonitoringParam = {
+  key: string;
+  label: string;
+  unit: string;
+  limit?: number; // regulatory threshold
+  category: MonitoringCategory;
+};
+
+export const MONITORING_PARAMS: MonitoringParam[] = [
+  { key: "pm10", label: "PM₁₀ (ambient)", unit: "µg/m³", limit: 100, category: "air" },
+  { key: "pm25", label: "PM₂.₅ (ambient)", unit: "µg/m³", limit: 60, category: "air" },
+  { key: "so2", label: "SO₂", unit: "µg/m³", limit: 80, category: "air" },
+  { key: "ph", label: "Treated water pH", unit: "pH", limit: 8.5, category: "water" },
+  { key: "bod", label: "BOD (treated effluent)", unit: "mg/L", limit: 30, category: "water" },
+  { key: "cod", label: "COD (treated effluent)", unit: "mg/L", limit: 250, category: "water" },
+  { key: "noise-day", label: "Noise — daytime", unit: "dB(A)", limit: 75, category: "noise" },
+  { key: "haz-waste", label: "Hazardous waste to authorised recycler", unit: "kg", category: "waste" },
+];
+
+export const monitoringParamByKey = (key: string) => MONITORING_PARAMS.find((p) => p.key === key);
+
+export type MonitoringReading = {
+  id: string;
+  paramKey: string;
+  entityId: string;
+  depotId: string;
+  period: string; // "2026-07" — matches PERIODS ids
+  value: number | null;
+  enteredBy: string; // person id — ESG Champion
+  source: "manual" | "excel";
+  prov?: Provenance; // set when source === "excel"
+};
+
+/** A reading breaches when it has a value over the parameter's regulatory limit. */
+export function isMonitoringBreach(r: MonitoringReading): boolean {
+  const p = monitoringParamByKey(r.paramKey);
+  return r.value != null && p?.limit != null && r.value > p.limit;
+}
+
+export const MONITORING_READINGS: MonitoringReading[] = [
+  // MBMT · Kashimira — July (one breach: PM10 over limit, arrived via Excel)
+  { id: "m-1", paramKey: "pm10", entityId: "mbmt", depotId: "kashimira", period: "2026-07", value: 118, enteredBy: "priya", source: "excel", prov: { source: "monitoring-upload.xlsx", fetchedAt: "2026-07-12T06:30:00Z" } },
+  { id: "m-2", paramKey: "pm25", entityId: "mbmt", depotId: "kashimira", period: "2026-07", value: 48, enteredBy: "priya", source: "excel", prov: { source: "monitoring-upload.xlsx", fetchedAt: "2026-07-12T06:30:00Z" } },
+  { id: "m-3", paramKey: "bod", entityId: "mbmt", depotId: "kashimira", period: "2026-07", value: 22, enteredBy: "rohan", source: "manual" },
+  { id: "m-4", paramKey: "noise-day", entityId: "mbmt", depotId: "kashimira", period: "2026-07", value: 71, enteredBy: "rohan", source: "manual" },
+  // MBMT · Bhayandar — July
+  { id: "m-5", paramKey: "pm10", entityId: "mbmt", depotId: "bhayandar", period: "2026-07", value: 86, enteredBy: "priya", source: "manual" },
+  { id: "m-6", paramKey: "bod", entityId: "mbmt", depotId: "bhayandar", period: "2026-07", value: 26, enteredBy: "rohan", source: "manual" },
+  { id: "m-7", paramKey: "ph", entityId: "mbmt", depotId: "bhayandar", period: "2026-07", value: null, enteredBy: "rohan", source: "manual" },
+  // Silvassa — July
+  { id: "m-8", paramKey: "pm10", entityId: "silvassa", depotId: "silvassa-depot", period: "2026-07", value: 74, enteredBy: "priya", source: "manual" },
+  { id: "m-9", paramKey: "noise-day", entityId: "silvassa", depotId: "silvassa-depot", period: "2026-07", value: 68, enteredBy: "priya", source: "manual" },
+  // June history (for trend sparklines)
+  { id: "m-10", paramKey: "pm10", entityId: "mbmt", depotId: "kashimira", period: "2026-06", value: 92, enteredBy: "priya", source: "manual" },
+  { id: "m-11", paramKey: "pm10", entityId: "mbmt", depotId: "kashimira", period: "2026-05", value: 88, enteredBy: "priya", source: "manual" },
+  { id: "m-12", paramKey: "pm25", entityId: "mbmt", depotId: "kashimira", period: "2026-06", value: 44, enteredBy: "priya", source: "manual" },
+  { id: "m-13", paramKey: "bod", entityId: "mbmt", depotId: "kashimira", period: "2026-06", value: 20, enteredBy: "rohan", source: "manual" },
+];
+
+/* ------------------------------- ESMS nav map ------------------------------ */
+
+/**
+ * Two-tier ESMS navigation. The module has too many sub-views for one segmented
+ * row, so tier-1 groups (Governance · Assessment · Assurance · Lifecycle) hold
+ * contextual tier-2 tabs. The tier-2 `key` is the `?sub=` deep-link value; tier-1
+ * is derived from it via {@link esmsTierForSub}, so old links (`?sub=esap`) resolve.
+ *
+ * Pure data (no JSX) so later phases register a sub-tab by adding a row here; the
+ * renderer maps `key` → panel. `available: false` reserves a slot for a later phase
+ * without surfacing an empty screen.
+ */
+export type EsmsTier = "governance" | "assessment" | "assurance" | "lifecycle";
+
+export const ESMS_TIERS: { key: EsmsTier; label: string }[] = [
+  { key: "governance", label: "Governance" },
+  { key: "assessment", label: "Assessment" },
+  { key: "assurance", label: "Assurance" },
+  { key: "lifecycle", label: "Lifecycle" },
+];
+
+export type EsmsSubTab = {
+  key: string; // the ?sub= value
+  tier: EsmsTier;
+  label: string; // plain label; `acronym` renders through <A> in the UI
+  acronym?: string; // when the whole label is a glossary acronym
+  available: boolean; // false = reserved for a later phase, hidden from the nav
+  phase?: number;
+};
+
+export const ESMS_SUBTABS: EsmsSubTab[] = [
+  { key: "policies", tier: "governance", label: "Policies", available: true },
+  { key: "sops", tier: "governance", label: "SOPs", available: true },
+  { key: "esap", tier: "governance", label: "ESAP register", acronym: "ESAP", available: true },
+  { key: "esdd", tier: "assessment", label: "ESDD", acronym: "ESDD", available: true },
+  { key: "esia", tier: "assessment", label: "ESIA", acronym: "ESIA", available: true },
+  { key: "monitoring", tier: "assessment", label: "Site Monitoring", available: false, phase: 6 },
+  { key: "audit-internal", tier: "assurance", label: "Internal Audit", available: true, phase: 3 },
+  { key: "audit-external", tier: "assurance", label: "External Audit", available: true, phase: 4 },
+  { key: "training", tier: "assurance", label: "Training", available: false, phase: 5 },
+  { key: "lifecycle", tier: "lifecycle", label: "Lifecycle", available: false, phase: 8 },
+];
+
+/** Legacy `?sub=` aliases → canonical sub key, so old deep-links keep resolving. */
+export const ESMS_SUB_ALIAS: Record<string, string> = {
+  audits: "audit-internal",
+};
+
+export function resolveEsmsSub(sub?: string): string {
+  if (!sub) return "policies";
+  const canonical = ESMS_SUB_ALIAS[sub] ?? sub;
+  const tab = ESMS_SUBTABS.find((s) => s.key === canonical);
+  return tab && tab.available ? canonical : "policies";
+}
+
+export function esmsTierForSub(sub: string): EsmsTier {
+  return ESMS_SUBTABS.find((s) => s.key === sub)?.tier ?? "governance";
+}
+
+export const isEsmsSubAvailable = (sub: string) => !!ESMS_SUBTABS.find((s) => s.key === sub)?.available;
+
+export const esmsSubsForTier = (tier: EsmsTier) => ESMS_SUBTABS.filter((s) => s.tier === tier && s.available);
+
+/** Tiers that currently have at least one available sub-tab. */
+export const availableEsmsTiers = () => ESMS_TIERS.filter((t) => esmsSubsForTier(t.key).length > 0);
 
 /* --------------------------------- periods -------------------------------- */
 
@@ -958,10 +1506,7 @@ export function cellStat(entityId: string, domain: DomainKey): CellStat {
     );
   }
   if (domain === "esms") {
-    return ESAP_ACTIONS.filter((a) => {
-      const asmt = ASSESSMENTS.find((x) => x.id === a.assessmentId);
-      return asmt?.entityId === entityId;
-    }).reduce(
+    return ESAP_ACTIONS.filter((a) => esapActionEntityId(a) === entityId).reduce(
       (acc, a) => {
         const s = esapState(a);
         if (s === "overdue") acc.overdue++;
@@ -992,14 +1537,64 @@ export function cellStat(entityId: string, domain: DomainKey): CellStat {
   return { valid: AMR_FIELDS.length - julyPending, expiring: julyPending, overdue: 0 };
 }
 
+/* ------------------------------ derived helpers ---------------------------- */
+
+export function auditFindingCounts(auditId: string): { compliant: number; nc: number; observation: number } {
+  const f = AUDIT_FINDINGS.filter((x) => x.auditId === auditId);
+  return {
+    compliant: f.filter((x) => x.result === "compliant").length,
+    nc: f.filter((x) => x.result === "nc").length,
+    observation: f.filter((x) => x.result === "observation").length,
+  };
+}
+
+/** Open non-conformities in scope: audit NCs whose corrective action is unresolved. */
+export function openNcCount(sel: ScopeSel): number {
+  return AUDIT_FINDINGS.filter((f) => f.result === "nc").filter((f) => {
+    const audit = AUDITS.find((a) => a.id === f.auditId);
+    if (!audit || !inScope({ entityId: audit.entityId, depotId: audit.depotId }, sel)) return false;
+    if (!f.actionId) return true; // an NC with no corrective action is still open
+    const act = ESAP_ACTIONS.find((x) => x.id === f.actionId);
+    return act ? act.status !== "closed" : true;
+  }).length;
+}
+
+export function trainingCoverage(
+  sel: ScopeSel,
+  period: string,
+): { sessions: number; attendees: number; rate: number } {
+  const sessions = TRAININGS.filter((t) => inScope({ entityId: t.entityId, depotId: t.depotId }, sel)).filter((t) =>
+    t.scheduledAt.startsWith(period),
+  );
+  const attendees = sessions.reduce((n, t) => n + t.attendees.length, 0);
+  const present = sessions.reduce((n, t) => n + t.attendees.filter((a) => a.present).length, 0);
+  return { sessions: sessions.length, attendees, rate: attendees ? Math.round((present / attendees) * 100) : 0 };
+}
+
+export function monitoringBreaches(sel: ScopeSel, period: string): MonitoringReading[] {
+  return MONITORING_READINGS.filter((r) => r.period === period)
+    .filter((r) => inScope({ entityId: r.entityId, depotId: r.depotId }, sel))
+    .filter((r) => isMonitoringBreach(r));
+}
+
+export function policiesDueForReview(sel: ScopeSel, withinDays = 60): Policy[] {
+  return POLICIES.filter((p) => inScope({ entityId: p.entityId }, sel)).filter(
+    (p) => daysUntil(p.reviewDue) <= withinDays,
+  );
+}
+
 export function headline(sel: ScopeSel) {
   const rec = RECORDS.filter((r) => inScope(r, sel));
   const overdue = rec.filter((r) => recordState(r) === "overdue");
   const expiring = rec.filter((r) => recordState(r) === "expiring");
   const openActions = ESAP_ACTIONS.filter((a) => a.status !== "closed").filter((a) => {
-    const asmt = ASSESSMENTS.find((x) => x.id === a.assessmentId);
-    return asmt ? inScope({ entityId: asmt.entityId }, { entityId: sel.entityId }) : true;
+    const entityId = esapActionEntityId(a);
+    return entityId ? inScope({ entityId }, { entityId: sel.entityId }) : true;
   });
   const compliantPct = rec.length === 0 ? 100 : Math.round(((rec.length - overdue.length) / rec.length) * 100);
-  return { records: rec, overdue, expiring, openActions, compliantPct };
+  // Wired in for the Phase 9 Overview tiles; the current tiles ignore the extra keys.
+  const openNcs = openNcCount(sel);
+  const breaches = monitoringBreaches(sel, PERIODS[0].id);
+  const policiesDue = policiesDueForReview(sel);
+  return { records: rec, overdue, expiring, openActions, compliantPct, openNcs, breaches, policiesDue };
 }

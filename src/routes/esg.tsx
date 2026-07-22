@@ -13,6 +13,8 @@ import { ReportsTab } from "@/components/esg/ReportsTab";
 import { VendorsTab } from "@/components/esg/VendorsTab";
 import { EsgContext, type Audience, type EsgCtx } from "@/components/esg/primitives";
 import { PERIODS, RECORDS, type ScopeSel } from "@/lib/esg-data";
+import { usePolicyWorkflow, type Role } from "@/lib/esg-policy";
+import { useAuditWorkflow } from "@/lib/esg-audit";
 
 type EsgSearch = { area?: string; sub?: string; record?: string };
 
@@ -41,11 +43,14 @@ function EsgPage() {
   const [scope, setScope] = useState<ScopeSel>({});
   const [period, setPeriod] = useState(PERIODS[0].id);
   const [audience, setAudience] = useState<Audience>("internal");
+  const [role, setRole] = useState<Role>("maintainer");
   const [drawerId, setDrawerId] = useState<string | null>(null);
+  const policy = usePolicyWorkflow();
+  const audit = useAuditWorkflow();
 
   const goto = useCallback(
-    (nextArea: string, opts?: { record?: string; state?: string }) => {
-      void navigate({ search: { area: nextArea, record: opts?.record, sub: undefined } });
+    (nextArea: string, opts?: { record?: string; state?: string; sub?: string }) => {
+      void navigate({ search: { area: nextArea, record: opts?.record, sub: opts?.sub } });
       if (opts?.record) setDrawerId(opts.record);
     },
     [navigate],
@@ -54,8 +59,8 @@ function EsgPage() {
   const openRecord = useCallback((id: string) => setDrawerId(id), []);
 
   const ctx = useMemo<EsgCtx>(
-    () => ({ scope, setScope, period, setPeriod, audience, setAudience, openRecord, goto }),
-    [scope, period, audience, openRecord, goto],
+    () => ({ scope, setScope, period, setPeriod, audience, setAudience, role, setRole, policy, audit, openRecord, goto }),
+    [scope, period, audience, role, policy, audit, openRecord, goto],
   );
 
   // Notification deep-links land with ?record= — open the drawer and highlight the row.

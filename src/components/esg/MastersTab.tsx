@@ -1,8 +1,44 @@
 import { useMemo, useState } from "react";
-import { BookMarked, CircleHelp, Settings2, Timer } from "lucide-react";
+import { BookMarked, CircleHelp, Settings2, Timer, UserCog } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { GLOSSARY, TYPE_MASTER } from "@/lib/esg-data";
-import { A, PanelCard, EmptyState } from "./primitives";
+import { ROLES, type Role } from "@/lib/esg-policy";
+import { A, PanelCard, EmptyState, useEsg } from "./primitives";
+import { Segmented } from "./Segmented";
+
+/**
+ * Dev-only role switcher. Presents the permission model that gates policy
+ * approval, monitoring entry, etc. — this is UI presentation, not enforcement.
+ */
+function RoleSwitcher() {
+  const { role, setRole } = useEsg();
+  return (
+    <PanelCard>
+      <div className="border-b border-border/60 px-5 py-3.5">
+        <h3 className="flex items-center gap-2 text-[15px] font-semibold tracking-tight">
+          <UserCog className="h-4 w-4 text-primary" aria-hidden /> Acting role
+          <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            dev
+          </span>
+        </h3>
+        <p className="text-[12px] text-muted-foreground">
+          Simulates who is signed in. Gates who may upload, submit, and approve across the module — a preview of the
+          permission model, not enforcement.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-3 px-5 py-4">
+        <Segmented<Role>
+          ariaLabel="Acting role"
+          size="md"
+          value={role}
+          onChange={setRole}
+          options={ROLES.map((r) => ({ key: r.key, label: r.label }))}
+        />
+        <span className="text-[11.5px] text-muted-foreground">{ROLES.find((r) => r.key === role)?.blurb}</span>
+      </div>
+    </PanelCard>
+  );
+}
 
 /** Masters: the configurable substrate — type lead-windows, glossary, open scope questions. */
 export function MastersTab() {
@@ -16,12 +52,14 @@ export function MastersTab() {
   );
 
   return (
-    <div className="grid items-start gap-4 xl:grid-cols-2">
-      <PanelCard>
-        <div className="border-b border-border/60 px-5 py-3.5">
-          <h3 className="flex items-center gap-2 text-[15px] font-semibold tracking-tight">
-            <Timer className="h-4 w-4 text-primary" aria-hidden /> Compliance type master
-          </h3>
+    <div className="space-y-4">
+      <RoleSwitcher />
+      <div className="grid items-start gap-4 xl:grid-cols-2">
+        <PanelCard>
+          <div className="border-b border-border/60 px-5 py-3.5">
+            <h3 className="flex items-center gap-2 text-[15px] font-semibold tracking-tight">
+              <Timer className="h-4 w-4 text-primary" aria-hidden /> Compliance type master
+            </h3>
           <p className="text-[12px] text-muted-foreground">
             Renewal lead windows are per type — a fire <A t="NOC" /> and an <A t="ISO" /> certificate warrant different warning horizons. These
             windows drive every alert.
@@ -115,6 +153,7 @@ export function MastersTab() {
             ))}
           </ul>
         </PanelCard>
+      </div>
       </div>
     </div>
   );

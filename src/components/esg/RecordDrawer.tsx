@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { CalendarClock, RefreshCcw, User, Wrench } from "lucide-react";
+import { ArrowUpRight, CalendarClock, RefreshCcw, ShieldCheck, User, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
+  AUDITS,
   countdownLabel,
   daysUntil,
   fmtDate,
@@ -38,11 +39,16 @@ export function RecordDrawer({
   record: ComplianceRecord | null;
   onClose: () => void;
 }) {
-  const { audience } = useEsg();
+  const { audience, goto } = useEsg();
   const [remarks, setRemarks] = useState<string | null>(null);
   const [renewal, setRenewal] = useState<string | null>(null);
 
   if (!record) return null;
+  // Reverse ISO cross-link: audits that maintain this certificate (external, most recent first).
+  const linkedAudits = AUDITS.filter((a) => a.recordId === record.id).sort((a, b) =>
+    (b.conductedOn ?? b.scheduledOn).localeCompare(a.conductedOn ?? a.scheduledOn),
+  );
+  const lastAudit = linkedAudits[0];
   const state = recordState(record);
   const type = typeByKey(record.typeKey);
   const owner = personById(record.ownerId);
@@ -192,6 +198,27 @@ export function RecordDrawer({
                   </div>
                 ))}
               </div>
+            </section>
+          )}
+
+          {lastAudit && (
+            <section>
+              <div className="section-label mb-2">Certification assurance</div>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  goto("esms", { sub: lastAudit.kind === "external" ? "audit-external" : "audit-internal" });
+                }}
+                className="flex w-full items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/8 px-3 py-2 text-left transition-colors hover:bg-primary/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+              >
+                <span className="inline-flex items-center gap-2 text-[12px] font-medium text-primary">
+                  <ShieldCheck className="h-3.5 w-3.5" aria-hidden />
+                  Last audited {fmtDate(lastAudit.conductedOn ?? lastAudit.scheduledOn)}
+                  {lastAudit.auditorOrg ? ` · ${lastAudit.auditorOrg}` : ""}
+                </span>
+                <ArrowUpRight className="h-3.5 w-3.5 text-primary" aria-hidden />
+              </button>
             </section>
           )}
 

@@ -23,6 +23,8 @@ import {
   type Provenance,
   type ScopeSel,
 } from "@/lib/esg-data";
+import type { PolicyWorkflow, Role } from "@/lib/esg-policy";
+import type { AuditWorkflow } from "@/lib/esg-audit";
 
 /* ------------------------------- ESG context ------------------------------- */
 
@@ -35,8 +37,15 @@ export type EsgCtx = {
   setPeriod: (p: string) => void;
   audience: Audience;
   setAudience: (a: Audience) => void;
+  /** Stubbed role for the permission-model presentation — UI gating, not enforcement. */
+  role: Role;
+  setRole: (r: Role) => void;
+  /** Policy version/approval workflow store (Phase 2). */
+  policy: PolicyWorkflow;
+  /** Audit workflow store — internal & external (Phases 3 & 4). */
+  audit: AuditWorkflow;
   openRecord: (id: string) => void;
-  goto: (area: string, opts?: { record?: string; state?: string }) => void;
+  goto: (area: string, opts?: { record?: string; state?: string; sub?: string }) => void;
 };
 
 export const EsgContext = createContext<EsgCtx | null>(null);
