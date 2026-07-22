@@ -8,7 +8,6 @@ import {
   AMR_FIELDS,
   AMR_VALUES,
   CARBON,
-  GHG_PARAMS,
   GHG_QTY,
   PERIODS,
   RECORDS,
@@ -17,8 +16,9 @@ import {
 } from "@/lib/esg-data";
 import { A, CriticalBeam, EmptyState, Gloss, PanelCard, ProvenanceChip, useEsg, useStubLoad, LoadingRows } from "./primitives";
 import { WorkQueue } from "./WorkQueue";
+import { NcPanel } from "./projects/NcPanel";
 
-type Sub = "permits" | "site" | "amr" | "ghg" | "carbon";
+type Sub = "permits" | "site" | "nc" | "amr" | "ghg" | "carbon";
 
 const nf = new Intl.NumberFormat("en-IN");
 
@@ -121,20 +121,24 @@ function AmrSection() {
 /* ----------------------------------- GHG ----------------------------------- */
 
 function GhgSection() {
-  const { period } = useEsg();
+  const { period, masters } = useEsg();
   const [qty, setQty] = useState<Record<string, string>>({});
   useEffect(() => setQty({}), [period]);
 
+  // Masters is the single source for factors/active state — editing or
+  // deactivating a parameter there is reflected here, not a parallel copy.
+  const params = masters.ghgParams().filter((p) => p.active);
+
   const rows = useMemo(
     () =>
-      GHG_PARAMS.map((p) => {
+      params.map((p) => {
         const base = GHG_QTY[period]?.[p.id];
         const raw = qty[p.id];
         const q = raw !== undefined && raw !== "" ? Number(raw) : base;
         const valid = q != null && Number.isFinite(q);
         return { p, q: valid ? (q as number) : null, kg: valid ? (q as number) * p.factor : null };
       }),
-    [period, qty],
+    [params, period, qty],
   );
 
   const scopeTotal = (s: 1 | 2 | 3) => rows.filter((r) => r.p.scope === s).reduce((acc, r) => acc + (r.kg ?? 0), 0);
@@ -274,6 +278,14 @@ export function ProjectsTab({ initialSub }: { initialSub?: string }) {
   const subs: { key: Sub; label: React.ReactNode }[] = [
     { key: "permits", label: "Permits & Licences" },
     { key: "site", label: "Compliance status" },
+    {
+      key: "nc",
+      label: (
+        <>
+          <A t="NC" /> Reports
+        </>
+      ),
+    },
     { key: "amr", label: <A t="AMR" /> },
     { key: "ghg", label: <A t="GHG" /> },
     { key: "carbon", label: "Carbon savings" },
@@ -339,6 +351,8 @@ export function ProjectsTab({ initialSub }: { initialSub?: string }) {
             <WorkQueue records={records} />
           )}
         </PanelCard>
+      ) : sub === "nc" ? (
+        <NcPanel />
       ) : sub === "amr" ? (
         <AmrSection />
       ) : sub === "ghg" ? (

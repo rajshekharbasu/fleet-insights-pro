@@ -123,11 +123,13 @@ export type ComplianceType = {
 
 export const TYPE_MASTER: ComplianceType[] = [
   { key: "incorporation", label: "Certificate of Incorporation", category: "permit", leadDays: 0, ownerRole: "Company Secretary" },
-  { key: "roc-filing", label: "ROC Annual Filing", category: "permit", leadDays: 30, ownerRole: "Company Secretary" },
+  // Renewal-bearing licence types raised to a 90-day (3-month) floor per the
+  // stakeholder requirement; perpetual instruments (no expiry) are unaffected.
+  { key: "roc-filing", label: "ROC Annual Filing", category: "permit", leadDays: 90, ownerRole: "Company Secretary" },
   { key: "moa-aoa", label: "MOA/AOA", category: "permit", leadDays: 0, ownerRole: "Company Secretary" },
   { key: "cto", label: "CTO — Consent to Operate", category: "permit", leadDays: 90, ownerRole: "ESG Executive" },
-  { key: "coe", label: "COE — Certificate of Establishment", category: "permit", leadDays: 60, ownerRole: "Admin" },
-  { key: "trade-licence", label: "Trade Licence", category: "permit", leadDays: 45, ownerRole: "Admin" },
+  { key: "coe", label: "COE — Certificate of Establishment", category: "permit", leadDays: 90, ownerRole: "Admin" },
+  { key: "trade-licence", label: "Trade Licence", category: "permit", leadDays: 90, ownerRole: "Admin" },
   { key: "fire-noc", label: "Fire NOC", category: "site", leadDays: 60, ownerRole: "Depot Manager" },
   { key: "swm", label: "SWM Authorisation", category: "site", leadDays: 60, ownerRole: "ESG Executive" },
   { key: "stp", label: "STP Compliance Certificate", category: "site", leadDays: 45, ownerRole: "Depot Manager" },
@@ -1164,6 +1166,126 @@ export const MONITORING_READINGS: MonitoringReading[] = [
   { id: "m-13", paramKey: "bod", entityId: "mbmt", depotId: "kashimira", period: "2026-06", value: 20, enteredBy: "rohan", source: "manual" },
 ];
 
+/* ----------------------------- project lifecycle ---------------------------- */
+
+/**
+ * The ESMS project lifecycle, as onboarding map and pipeline view. Node shape
+ * (start/process/decision/document/end) is the legend from the stakeholder
+ * diagram; `deepLink` is what a click navigates to — undefined for nodes with
+ * no corresponding screen (decisions, documents, the two terminal nodes).
+ */
+export type LifecycleStageKind = "start" | "process" | "decision" | "document" | "end";
+
+export type LifecycleStage = {
+  key: string;
+  label: string;
+  kind: LifecycleStageKind;
+  note?: string;
+  deepLink?: { sub: string };
+};
+
+/** Column a stage sits in in the branch section — undefined outside the branch. */
+export type LifecycleBranch = "brownfield" | "greenfield";
+
+export const LIFECYCLE_STAGES: LifecycleStage[] = [
+  { key: "new-opportunity", label: "New project opportunity", kind: "start" },
+  { key: "screening", label: "Preliminary E&S screening", note: "Before bidding", kind: "process" },
+  { key: "screening-doc", label: "Screening report", kind: "document" },
+  { key: "classification", label: "Project type classification", kind: "decision" },
+  // brownfield branch
+  { key: "esdd", label: "Comprehensive ESDD", kind: "process", deepLink: { sub: "esdd" } },
+  { key: "esdd-risk", label: "Risk identification & analysis", kind: "process", deepLink: { sub: "esdd" } },
+  { key: "esdd-category", label: "Assign risk category A/B/C/D", kind: "process", deepLink: { sub: "esdd" } },
+  { key: "esap-formulate", label: "Formulate ESAP", kind: "process", deepLink: { sub: "esap" } },
+  { key: "esdd-docs", label: "ESDD report · ESAP", kind: "document" },
+  { key: "esap-implement", label: "Implement ESAP", kind: "process", deepLink: { sub: "esap" } },
+  // greenfield branch
+  { key: "esia", label: "Comprehensive ESIA", kind: "process", deepLink: { sub: "esia" } },
+  { key: "esia-risk", label: "Risk identification & analysis", kind: "process", deepLink: { sub: "esia" } },
+  { key: "esia-category", label: "Assign risk category A/B/C/D", kind: "process", deepLink: { sub: "esia" } },
+  { key: "esmp-formulate", label: "Formulate ESMP", kind: "process", deepLink: { sub: "esia" } },
+  { key: "esia-docs", label: "ESIA report · ESMP", kind: "document" },
+  { key: "esmp-implement", label: "Implement ESMP", kind: "process", deepLink: { sub: "esia" } },
+  // converge
+  { key: "monitor-review", label: "Monitor & review implementation", kind: "process", deepLink: { sub: "monitoring" } },
+  { key: "risk-reduced", label: "Risk category reduced?", kind: "decision" },
+  { key: "update-action", label: "Update action / management plan", note: "Re-implement — loops back", kind: "process", deepLink: { sub: "esap" } },
+  { key: "maintain-ops", label: "Maintain operations", note: "Lower risk profile", kind: "process", deepLink: { sub: "monitoring" } },
+  { key: "ongoing-monitoring", label: "Ongoing monitoring & periodic review", kind: "process", deepLink: { sub: "monitoring" } },
+  { key: "closure", label: "Project closure / phase-out", note: "Not in current scope", kind: "end" },
+];
+
+export const lifecycleStageByKey = (key: string) => LIFECYCLE_STAGES.find((s) => s.key === key);
+
+export const LIFECYCLE_BRANCH_STAGES: Record<LifecycleBranch, string[]> = {
+  brownfield: ["esdd", "esdd-risk", "esdd-category", "esap-formulate", "esdd-docs", "esap-implement"],
+  greenfield: ["esia", "esia-risk", "esia-category", "esmp-formulate", "esia-docs", "esmp-implement"],
+};
+
+export type ProjectLifecycle = {
+  projectId: string;
+  project: string;
+  entityId: string;
+  branch: LifecycleBranch;
+  currentStage: string;
+  stageEnteredOn: string; // ISO date
+  blocked?: { reason: string; since: string };
+};
+
+export const PROJECT_LIFECYCLES: ProjectLifecycle[] = [
+  {
+    projectId: "pl-mbmt",
+    project: "MBMT depot electrification",
+    entityId: "mbmt",
+    branch: "brownfield",
+    currentStage: "esap-implement",
+    stageEnteredOn: "2026-06-15",
+  },
+  {
+    projectId: "pl-silvassa",
+    project: "Silvassa greenfield depot",
+    entityId: "silvassa",
+    branch: "greenfield",
+    currentStage: "monitor-review",
+    stageEnteredOn: "2026-06-20",
+  },
+  {
+    projectId: "pl-noida",
+    project: "Depot acquisition — due diligence",
+    entityId: "corp",
+    branch: "brownfield",
+    currentStage: "esdd",
+    stageEnteredOn: "2026-06-20", // ~25d in stage as of ESG_TODAY — the bottleneck showcase
+    blocked: { reason: "Soil contamination screen results pending from the lab", since: "2026-06-20" },
+  },
+  {
+    projectId: "pl-corp2",
+    project: "Corporate HQ annex fit-out",
+    entityId: "corp",
+    branch: "brownfield",
+    currentStage: "classification",
+    stageEnteredOn: "2026-07-10",
+  },
+];
+
+/** A stage is a bottleneck when a project is explicitly blocked, or has sat there beyond the threshold. */
+export const LIFECYCLE_STUCK_THRESHOLD_DAYS = 21;
+
+export function lifecycleDaysInStage(p: ProjectLifecycle): number {
+  return Math.max(0, daysUntil(p.stageEnteredOn) * -1);
+}
+
+export function lifecycleIsBottleneck(p: ProjectLifecycle): boolean {
+  return !!p.blocked || lifecycleDaysInStage(p) > LIFECYCLE_STUCK_THRESHOLD_DAYS;
+}
+
+/** Count of projects currently sitting at each stage — the pipeline view. */
+export function lifecycleStageCounts(): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const p of PROJECT_LIFECYCLES) counts[p.currentStage] = (counts[p.currentStage] ?? 0) + 1;
+  return counts;
+}
+
 /* ------------------------------- ESMS nav map ------------------------------ */
 
 /**
@@ -1200,11 +1322,11 @@ export const ESMS_SUBTABS: EsmsSubTab[] = [
   { key: "esap", tier: "governance", label: "ESAP register", acronym: "ESAP", available: true },
   { key: "esdd", tier: "assessment", label: "ESDD", acronym: "ESDD", available: true },
   { key: "esia", tier: "assessment", label: "ESIA", acronym: "ESIA", available: true },
-  { key: "monitoring", tier: "assessment", label: "Site Monitoring", available: false, phase: 6 },
+  { key: "monitoring", tier: "assessment", label: "Site Monitoring", available: true, phase: 6 },
   { key: "audit-internal", tier: "assurance", label: "Internal Audit", available: true, phase: 3 },
   { key: "audit-external", tier: "assurance", label: "External Audit", available: true, phase: 4 },
-  { key: "training", tier: "assurance", label: "Training", available: false, phase: 5 },
-  { key: "lifecycle", tier: "lifecycle", label: "Lifecycle", available: false, phase: 8 },
+  { key: "training", tier: "assurance", label: "Training", available: true, phase: 5 },
+  { key: "lifecycle", tier: "lifecycle", label: "Lifecycle", available: true, phase: 8 },
 ];
 
 /** Legacy `?sub=` aliases → canonical sub key, so old deep-links keep resolving. */
@@ -1417,6 +1539,7 @@ export type ReportDef = {
 
 export const REPORT_DEFS: ReportDef[] = [
   { id: "noncompliance", name: "Non-compliance report", acronyms: [], blurb: "Roll-up of every item outside validity, with root cause and remediation state.", kind: "rollup" },
+  { id: "nc-report", name: "NC Report", acronyms: ["NC"], blurb: "Consolidated register: permits, site compliance, internal & external audit NCs, and monitoring breaches — one list, one number.", kind: "rollup" },
   { id: "amr", name: "AMR", acronyms: ["AMR"], blurb: "Lender-format monitoring report from configured input fields.", kind: "external-format" },
   { id: "ghg", name: "GHG inventory", acronyms: ["GHG"], blurb: "Scope 1 / 2 / 3 emissions from configured parameters and factors.", kind: "external-format" },
   { id: "brsr", name: "BRSR", acronyms: ["BRSR", "SEBI"], blurb: "SEBI disclosure format; project-level, rolls up to group.", kind: "external-format" },

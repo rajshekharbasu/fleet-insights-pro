@@ -24,6 +24,16 @@ import {
   typeByKey,
   type ReportDef,
 } from "@/lib/esg-data";
+import {
+  buildNcRegister,
+  NC_SOURCE_LABEL,
+  ncItemOwnerName,
+  ncItemPlace,
+  ncRaisedLabel,
+  sortNcRegister,
+  type NcItem,
+} from "@/lib/esg-nc";
+import { exportToXlsx } from "@/lib/export-xlsx";
 import { A, DocChip, EmptyState, Gloss, PanelCard, StatePill, WithheldPill, useEsg, useStubLoad, LoadingRows } from "./primitives";
 
 const nf = new Intl.NumberFormat("en-IN");
@@ -35,16 +45,41 @@ const KIND_LABEL: Record<ReportDef["kind"], string> = {
   calculation: "Calculation",
 };
 
+function ncExportRows(items: NcItem[]) {
+  return items.map((r) => ({
+    "NC ref": r.ref,
+    Source: NC_SOURCE_LABEL[r.source],
+    Finding: r.title,
+    Entity: ncItemPlace(r),
+    Raised: ncRaisedLabel(r),
+    "Age (days)": r.ageDays,
+    Severity: r.severity ?? "",
+    Owner: ncItemOwnerName(r),
+    "Corrective action status": r.actionStatus,
+  }));
+}
+
 /** Two-step egress: curation review is an unavoidable stage, never a checkbox. */
 function ExportFlow({ def, onDone }: { def: ReportDef; onDone: () => void }) {
-  const { scope, period } = useEsg();
+  const { scope, period, audit, monitoring } = useEsg();
   const [step, setStep] = useState<1 | 2>(1);
+  const isNc = def.id === "nc-report";
+
   const withheld = useMemo(
     () => RECORDS.filter((r) => inScope(r, scope)).filter((r) => r.withheldExternal),
     [scope],
   );
+  const ncRegister = useMemo(
+    () => (isNc ? buildNcRegister(scope, period, audit, monitoring) : []),
+    [isNc, scope, period, audit, monitoring],
+  );
+  const ncWithheld = useMemo(() => ncRegister.filter((r) => r.withheldExternal), [ncRegister]);
+  const ncVisible = useMemo(() => ncRegister.filter((r) => !r.withheldExternal), [ncRegister]);
+
   const [included, setIncluded] = useState<Record<string, boolean>>({});
-  const includedCount = withheld.filter((r) => included[r.id]).length;
+  const includedCount = isNc
+    ? ncWithheld.filter((r) => included[r.id]).length
+    : withheld.filter((r) => included[r.id]).length;
 
   return (
     <Dialog open onOpenChange={(o) => !o && onDone()}>
@@ -63,39 +98,71 @@ function ExportFlow({ def, onDone }: { def: ReportDef; onDone: () => void }) {
             <div className="px-5 py-4">
               <div className="flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/8 px-3.5 py-2.5 text-[12px] font-medium text-foreground">
                 <ShieldCheck className="h-4 w-4 shrink-0 text-warning" aria-hidden />
-                {withheld.length} item{withheld.length === 1 ? "" : "s"} withheld from external audiences by default. Including one is a
-                deliberate, logged decision.
+                {isNc ? ncWithheld.length : withheld.length} item{(isNc ? ncWithheld.length : withheld.length) === 1 ? "" : "s"} withheld
+                from external audiences by default. Including one is a deliberate, logged decision.
               </div>
               <div className="mt-3 max-h-[260px] space-y-2 overflow-auto pr-1">
-                {withheld.length === 0 && (
+                {isNc ? (
+                  ncWithheld.length === 0 ? (
+                    <p className="py-6 text-center text-[12.5px] text-muted-foreground">Nothing is withheld in this scope — the external artifact equals the internal one.</p>
+                  ) : (
+                    ncWithheld.map((r) => (
+                      <label
+                        key={r.id}
+                        className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/60 bg-muted/20 px-3.5 py-2.5 transition-colors hover:border-primary/30"
+                      >
+                        <Checkbox
+                          checked={!!included[r.id]}
+                          onCheckedChange={(v) => setIncluded((m) => ({ ...m, [r.id]: v === true }))}
+                          className="mt-0.5"
+                          aria-label={`Include ${r.title} in external artifact`}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-2">
+                            <span className="text-[12.5px] font-medium">{r.title}</span>
+                            <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              {NC_SOURCE_LABEL[r.source]}
+                            </span>
+                            <WithheldPill />
+                          </span>
+                          <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">
+                            {ncItemPlace(r)} · raised {ncRaisedLabel(r)} · {r.ageDays}d old
+                            {r.remarks ? ` · ${r.remarks.slice(0, 70)}…` : ""}
+                          </span>
+                        </span>
+                      </label>
+                    ))
+                  )
+                ) : withheld.length === 0 ? (
                   <p className="py-6 text-center text-[12.5px] text-muted-foreground">Nothing is withheld in this scope — the external artifact equals the internal one.</p>
+                ) : (
+                  withheld.map((r) => {
+                    const t = typeByKey(r.typeKey);
+                    return (
+                      <label
+                        key={r.id}
+                        className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/60 bg-muted/20 px-3.5 py-2.5 transition-colors hover:border-primary/30"
+                      >
+                        <Checkbox
+                          checked={!!included[r.id]}
+                          onCheckedChange={(v) => setIncluded((m) => ({ ...m, [r.id]: v === true }))}
+                          className="mt-0.5"
+                          aria-label={`Include ${t?.label} in external artifact`}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-2">
+                            <span className="text-[12.5px] font-medium">{t?.label}</span>
+                            <StatePill state={recordState(r)} />
+                            <WithheldPill />
+                          </span>
+                          <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">
+                            {recordPlace(r)} · expired {fmtDate(r.expiryDate)} · {r.remarks?.slice(0, 80)}…
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })
                 )}
-                {withheld.map((r) => {
-                  const t = typeByKey(r.typeKey);
-                  return (
-                    <label
-                      key={r.id}
-                      className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/60 bg-muted/20 px-3.5 py-2.5 transition-colors hover:border-primary/30"
-                    >
-                      <Checkbox
-                        checked={!!included[r.id]}
-                        onCheckedChange={(v) => setIncluded((m) => ({ ...m, [r.id]: v === true }))}
-                        className="mt-0.5"
-                        aria-label={`Include ${t?.label} in external artifact`}
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="flex flex-wrap items-center gap-2">
-                          <span className="text-[12.5px] font-medium">{t?.label}</span>
-                          <StatePill state={recordState(r)} />
-                          <WithheldPill />
-                        </span>
-                        <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">
-                          {recordPlace(r)} · expired {fmtDate(r.expiryDate)} · {r.remarks?.slice(0, 80)}…
-                        </span>
-                      </span>
-                    </label>
-                  );
-                })}
               </div>
             </div>
             <div className="flex items-center justify-between border-t border-border/60 bg-muted/20 px-5 py-3.5">
@@ -119,17 +186,24 @@ function ExportFlow({ def, onDone }: { def: ReportDef; onDone: () => void }) {
                   {scopeLabel(scope)} · {PERIODS.find((p) => p.id === period)?.label}
                 </div>
                 <div className="mt-3 grid grid-cols-3 gap-3">
-                  {[
-                    { l: "Tracked items", v: String(RECORDS.filter((r) => inScope(r, scope)).length) },
-                    {
-                      l: "Disclosed lapses",
-                      v: String(includedCount),
-                    },
-                    {
-                      l: "Compliance",
-                      v: `${Math.round(((RECORDS.filter((r) => inScope(r, scope)).length - RECORDS.filter((r) => inScope(r, scope)).filter((x) => recordState(x) === "overdue").length) / Math.max(1, RECORDS.filter((r) => inScope(r, scope)).length)) * 100)}%`,
-                    },
-                  ].map((s) => (
+                  {(isNc
+                    ? [
+                        { l: "Disclosed NCs", v: String(ncVisible.length + includedCount) },
+                        { l: "Withheld", v: String(ncWithheld.length - includedCount) },
+                        { l: "Total in scope", v: String(ncRegister.length) },
+                      ]
+                    : [
+                        { l: "Tracked items", v: String(RECORDS.filter((r) => inScope(r, scope)).length) },
+                        {
+                          l: "Disclosed lapses",
+                          v: String(includedCount),
+                        },
+                        {
+                          l: "Compliance",
+                          v: `${Math.round(((RECORDS.filter((r) => inScope(r, scope)).length - RECORDS.filter((r) => inScope(r, scope)).filter((x) => recordState(x) === "overdue").length) / Math.max(1, RECORDS.filter((r) => inScope(r, scope)).length)) * 100)}%`,
+                        },
+                      ]
+                  ).map((s) => (
                     <div key={s.l} className="rounded-lg bg-muted/40 px-3 py-2">
                       <div className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{s.l}</div>
                       <div className="num mt-0.5 text-[16px] font-semibold">{s.v}</div>
@@ -149,9 +223,28 @@ function ExportFlow({ def, onDone }: { def: ReportDef; onDone: () => void }) {
                 size="sm"
                 className="h-8 gap-1.5 rounded-lg text-[12px]"
                 onClick={() => {
-                  toast.success("External artifact prepared", {
-                    description: `${def.name} exported with ${includedCount} disclosed lapse${includedCount === 1 ? "" : "s"}. (UI stub — real export lands with the backend.)`,
-                  });
+                  if (isNc) {
+                    const disclosed = ncWithheld.filter((r) => included[r.id]);
+                    const finalRows = [...ncVisible, ...disclosed];
+                    exportToXlsx(`nc-report-external-${period}`, [
+                      { key: "NC ref", header: "NC ref" },
+                      { key: "Source", header: "Source" },
+                      { key: "Finding", header: "Finding" },
+                      { key: "Entity", header: "Entity" },
+                      { key: "Raised", header: "Raised" },
+                      { key: "Age (days)", header: "Age (days)" },
+                      { key: "Severity", header: "Severity" },
+                      { key: "Owner", header: "Owner" },
+                      { key: "Corrective action status", header: "Corrective action status" },
+                    ], ncExportRows(finalRows), "NC Report");
+                    toast.success("External NC report downloaded", {
+                      description: `${finalRows.length} rows (${includedCount} disclosed withheld item${includedCount === 1 ? "" : "s"}).`,
+                    });
+                  } else {
+                    toast.success("External artifact prepared", {
+                      description: `${def.name} exported with ${includedCount} disclosed lapse${includedCount === 1 ? "" : "s"}. (UI stub — real export lands with the backend.)`,
+                    });
+                  }
                   onDone();
                 }}
               >
@@ -166,9 +259,62 @@ function ExportFlow({ def, onDone }: { def: ReportDef; onDone: () => void }) {
 }
 
 function InternalPreview({ def }: { def: ReportDef }) {
-  const { scope, period, audience } = useEsg();
+  const { scope, period, audience, audit, monitoring } = useEsg();
   const records = RECORDS.filter((r) => inScope(r, scope));
   const external = audience === "external";
+
+  if (def.id === "nc-report") {
+    const register = sortNcRegister(buildNcRegister(scope, period, audit, monitoring));
+    const rows = register.filter((r) => (external ? !r.withheldExternal : true));
+    const withheldCount = register.length - rows.length;
+    if (rows.length === 0) {
+      return <EmptyState title="No non-compliances in this scope" hint={external ? "Withheld items are not shown in the external view." : undefined} />;
+    }
+    return (
+      <div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] text-[12.5px]">
+            <thead>
+              <tr className="border-b border-border/60 text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+                <th className="px-5 py-2.5 text-left font-medium">Finding</th>
+                <th className="px-3 py-2.5 text-left font-medium">Source</th>
+                <th className="px-3 py-2.5 text-left font-medium">Entity</th>
+                <th className="px-3 py-2.5 text-right font-medium">Age</th>
+                <th className="px-3 py-2.5 text-left font-medium">Owner</th>
+                <th className="px-5 py-2.5 text-left font-medium">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-b border-border/40 align-top last:border-0">
+                  <td className="px-5 py-3">
+                    <div className="font-medium">{r.title}</div>
+                    <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      {r.ref}
+                      {r.withheldExternal && !external && <WithheldPill />}
+                    </div>
+                  </td>
+                  <td className="px-3 py-3 text-muted-foreground">{NC_SOURCE_LABEL[r.source]}</td>
+                  <td className="px-3 py-3">{ncItemPlace(r)}</td>
+                  <td className="num px-3 py-3 text-right font-semibold">{r.ageDays}d</td>
+                  <td className="px-3 py-3 text-[12px]">{ncItemOwnerName(r)}</td>
+                  <td className="max-w-[220px] px-5 py-3 text-[11.5px] leading-relaxed text-muted-foreground">
+                    {r.actionStatus === "none" ? "No corrective action" : r.actionStatus}
+                    {r.remarks ? ` — ${r.remarks.slice(0, 60)}…` : ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!external && withheldCount > 0 && (
+          <p className="border-t border-border/40 px-5 py-2.5 text-[11.5px] text-muted-foreground">
+            {withheldCount} item{withheldCount === 1 ? "" : "s"} withheld from the external view.
+          </p>
+        )}
+      </div>
+    );
+  }
 
   if (def.id === "noncompliance") {
     const rows = records
@@ -427,12 +573,33 @@ function UploadedReports({
 }
 
 export function ReportsTab() {
-  const { scope, period, audience } = useEsg();
+  const { scope, period, audience, audit, monitoring } = useEsg();
   const [sel, setSel] = useState<string>("noncompliance");
   const [exporting, setExporting] = useState(false);
   const [uploads, setUploads] = useState<Record<string, UploadedFile[]>>({});
   const loading = useStubLoad(sel + period + JSON.stringify(scope));
   const def = REPORT_DEFS.find((d) => d.id === sel)!;
+
+  const downloadCompleteNcReport = () => {
+    const register = sortNcRegister(buildNcRegister(scope, period, audit, monitoring));
+    exportToXlsx(
+      `nc-report-internal-${period}`,
+      [
+        { key: "NC ref", header: "NC ref" },
+        { key: "Source", header: "Source" },
+        { key: "Finding", header: "Finding" },
+        { key: "Entity", header: "Entity" },
+        { key: "Raised", header: "Raised" },
+        { key: "Age (days)", header: "Age (days)" },
+        { key: "Severity", header: "Severity" },
+        { key: "Owner", header: "Owner" },
+        { key: "Corrective action status", header: "Corrective action status" },
+      ],
+      ncExportRows(register),
+      "NC Report",
+    );
+    toast.success("Internal NC report downloaded", { description: `${register.length} rows — nothing withheld internally.` });
+  };
 
   return (
     <div className="space-y-4">
@@ -476,6 +643,11 @@ export function ReportsTab() {
             <span className="hidden items-center gap-1.5 text-[11px] font-medium text-muted-foreground md:inline-flex">
               <Eye className="h-3 w-3" aria-hidden /> internal always complete
             </span>
+            {def.id === "nc-report" && audience === "internal" && (
+              <Button size="sm" variant="outline" className="h-8 gap-1.5 rounded-lg text-[12px]" onClick={downloadCompleteNcReport}>
+                <Download className="h-3.5 w-3.5" /> Download complete
+              </Button>
+            )}
             <Button size="sm" className="h-8 gap-1.5 rounded-lg text-[12px]" onClick={() => setExporting(true)}>
               <Globe className="h-3.5 w-3.5" /> Prepare external export
             </Button>

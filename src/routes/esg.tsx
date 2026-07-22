@@ -15,8 +15,17 @@ import { EsgContext, type Audience, type EsgCtx } from "@/components/esg/primiti
 import { PERIODS, RECORDS, type ScopeSel } from "@/lib/esg-data";
 import { usePolicyWorkflow, type Role } from "@/lib/esg-policy";
 import { useAuditWorkflow } from "@/lib/esg-audit";
+import { useTrainingWorkflow } from "@/lib/esg-training";
+import { useMonitoringWorkflow } from "@/lib/esg-monitoring";
+import { useMastersWorkflow } from "@/lib/esg-masters";
+import { personById } from "@/lib/esg-data";
 
 type EsgSearch = { area?: string; sub?: string; record?: string };
+
+const trainingPersonLabel = (id: string) => {
+  const p = personById(id);
+  return { name: p?.name ?? id, role: p?.role ?? "" };
+};
 
 export const Route = createFileRoute("/esg")({
   validateSearch: (s: Record<string, unknown>): EsgSearch => ({
@@ -47,6 +56,9 @@ function EsgPage() {
   const [drawerId, setDrawerId] = useState<string | null>(null);
   const policy = usePolicyWorkflow();
   const audit = useAuditWorkflow();
+  const training = useTrainingWorkflow(trainingPersonLabel);
+  const monitoring = useMonitoringWorkflow();
+  const masters = useMastersWorkflow();
 
   const goto = useCallback(
     (nextArea: string, opts?: { record?: string; state?: string; sub?: string }) => {
@@ -59,8 +71,8 @@ function EsgPage() {
   const openRecord = useCallback((id: string) => setDrawerId(id), []);
 
   const ctx = useMemo<EsgCtx>(
-    () => ({ scope, setScope, period, setPeriod, audience, setAudience, role, setRole, policy, audit, openRecord, goto }),
-    [scope, period, audience, role, policy, audit, openRecord, goto],
+    () => ({ scope, setScope, period, setPeriod, audience, setAudience, role, setRole, policy, audit, training, monitoring, masters, openRecord, goto }),
+    [scope, period, audience, role, policy, audit, training, monitoring, masters, openRecord, goto],
   );
 
   // Notification deep-links land with ?record= — open the drawer and highlight the row.

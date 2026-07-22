@@ -25,6 +25,9 @@ import {
 } from "@/lib/esg-data";
 import type { PolicyWorkflow, Role } from "@/lib/esg-policy";
 import type { AuditWorkflow } from "@/lib/esg-audit";
+import type { TrainingWorkflow } from "@/lib/esg-training";
+import type { MonitoringWorkflow } from "@/lib/esg-monitoring";
+import type { MastersWorkflow } from "@/lib/esg-masters";
 
 /* ------------------------------- ESG context ------------------------------- */
 
@@ -44,6 +47,12 @@ export type EsgCtx = {
   policy: PolicyWorkflow;
   /** Audit workflow store — internal & external (Phases 3 & 4). */
   audit: AuditWorkflow;
+  /** Training calendar workflow store (Phase 5). */
+  training: TrainingWorkflow;
+  /** Site monitoring workflow store (Phase 6). */
+  monitoring: MonitoringWorkflow;
+  /** Editable masters — lead windows + GHG factors (Phase 9). */
+  masters: MastersWorkflow;
   openRecord: (id: string) => void;
   goto: (area: string, opts?: { record?: string; state?: string; sub?: string }) => void;
 };

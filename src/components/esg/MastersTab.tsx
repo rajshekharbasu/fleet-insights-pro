@@ -5,6 +5,7 @@ import { GLOSSARY, TYPE_MASTER } from "@/lib/esg-data";
 import { ROLES, type Role } from "@/lib/esg-policy";
 import { A, PanelCard, EmptyState, useEsg } from "./primitives";
 import { Segmented } from "./Segmented";
+import { GhgMastersPanel } from "./GhgMastersPanel";
 
 /**
  * Dev-only role switcher. Presents the permission model that gates policy
@@ -42,6 +43,7 @@ function RoleSwitcher() {
 
 /** Masters: the configurable substrate — type lead-windows, glossary, open scope questions. */
 export function MastersTab() {
+  const { masters } = useEsg();
   const [q, setQ] = useState("");
   const terms = useMemo(
     () =>
@@ -62,7 +64,7 @@ export function MastersTab() {
             </h3>
           <p className="text-[12px] text-muted-foreground">
             Renewal lead windows are per type — a fire <A t="NOC" /> and an <A t="ISO" /> certificate warrant different warning horizons. These
-            windows drive every alert.
+            windows drive every alert. Renewal-bearing licences carry a 90-day (3-month) floor; edit any window below.
           </p>
         </div>
         <div className="overflow-x-auto">
@@ -76,25 +78,52 @@ export function MastersTab() {
               </tr>
             </thead>
             <tbody>
-              {TYPE_MASTER.map((t) => (
-                <tr key={t.key} className="border-b border-border/40 last:border-0">
-                  <td className="px-5 py-2.5 font-medium">
-                    <A t={t.label.split(" ")[0]} />
-                    {t.label.includes(" ") ? ` ${t.label.slice(t.label.indexOf(" ") + 1)}` : ""}
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      {t.category === "permit" ? "Permit" : "Site"}
-                    </span>
-                  </td>
-                  <td className="num px-3 py-2.5 text-right font-semibold">{t.leadDays === 0 ? "—" : `${t.leadDays}d`}</td>
-                  <td className="px-5 py-2.5 text-[12px] text-muted-foreground">{t.ownerRole}</td>
-                </tr>
-              ))}
+              {TYPE_MASTER.map((t) => {
+                const days = masters.leadDaysFor(t.key);
+                const perpetual = t.leadDays === 0;
+                return (
+                  <tr key={t.key} className="border-b border-border/40 last:border-0">
+                    <td className="px-5 py-2.5 font-medium">
+                      <A t={t.label.split(" ")[0]} />
+                      {t.label.includes(" ") ? ` ${t.label.slice(t.label.indexOf(" ") + 1)}` : ""}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        {t.category === "permit" ? "Permit" : "Site"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-right">
+                      {perpetual ? (
+                        <span className="num text-muted-foreground">—</span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 justify-end">
+                          <Input
+                            type="number"
+                            min={0}
+                            defaultValue={days}
+                            onBlur={(e) => {
+                              const v = Number(e.target.value);
+                              if (Number.isFinite(v)) masters.setLeadDays(t.key, v);
+                            }}
+                            className="num h-7 w-16 text-right text-[12px] font-semibold"
+                            aria-label={`${t.label} lead window (days)`}
+                          />
+                          <span className="text-[11px] text-muted-foreground">d</span>
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-5 py-2.5 text-[12px] text-muted-foreground">{t.ownerRole}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </PanelCard>
+
+      <div className="xl:col-span-2">
+        <GhgMastersPanel />
+      </div>
 
       <div className="space-y-4">
         <PanelCard>

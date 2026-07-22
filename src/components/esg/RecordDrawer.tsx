@@ -1,7 +1,10 @@
-import { useState } from "react";
-import { ArrowUpRight, CalendarClock, RefreshCcw, ShieldCheck, User, Wrench } from "lucide-react";
+import { useRef, useState } from "react";
+import { ArrowUpRight, CalendarClock, History, RefreshCcw, ShieldCheck, UploadCloud, User, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -9,6 +12,7 @@ import {
   AUDITS,
   countdownLabel,
   daysUntil,
+  ESG_TODAY,
   fmtDate,
   personById,
   recordPlace,
@@ -19,12 +23,82 @@ import {
 } from "@/lib/esg-data";
 import { A, CriticalBeam, DocChip, Gloss, ProvenanceChip, StatePill, WithheldPill, useEsg } from "./primitives";
 
+type DocVersion = { name: string; size: string; uploadedAt: string };
+
 function Detail({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
       <div className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{label}</div>
       <div className="mt-1 text-[13px] font-medium leading-snug">{children}</div>
     </div>
+  );
+}
+
+const todayIso = () => ESG_TODAY.toISOString().slice(0, 10);
+
+/** Update flow: new expiry + new document, preserving history. Session-local, like the drawer's other actions. */
+function UpdateLicenceDialog({
+  open,
+  onOpenChange,
+  currentExpiry,
+  onUpdate,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  currentExpiry?: string;
+  onUpdate: (newExpiry: string, doc: DocVersion) => void;
+}) {
+  const [expiry, setExpiry] = useState(currentExpiry ?? "");
+  const [fileName, setFileName] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const submit = () => {
+    if (!expiry) return;
+    onUpdate(expiry, {
+      name: fileName ?? `renewed-licence-${expiry}.pdf`,
+      size: "—",
+      uploadedAt: todayIso(),
+    });
+    setFileName(null);
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle className="text-[15px]">Update licence</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label className="text-[12px]">New expiry date</Label>
+            <Input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className="h-9 text-[12.5px]" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[12px]">Renewed document</Label>
+            <input
+              ref={fileRef}
+              type="file"
+              className="hidden"
+              onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
+            />
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              className="flex w-full items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-left text-[12px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+            >
+              <UploadCloud className="h-3.5 w-3.5" aria-hidden />
+              {fileName ?? "Attach the renewed licence (UI stub — not stored)"}
+            </button>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button size="sm" onClick={submit} disabled={!expiry} className="text-[12px]">
+            Save — preserves history
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -42,6 +116,10 @@ export function RecordDrawer({
   const { audience, goto } = useEsg();
   const [remarks, setRemarks] = useState<string | null>(null);
   const [renewal, setRenewal] = useState<string | null>(null);
+  const [docs, setDocs] = useState<DocVersion[] | null>(null);
+  const [expiryOverride, setExpiryOverride] = useState<string | null>(null);
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   if (!record) return null;
   // Reverse ISO cross-link: audits that maintain this certificate (external, most recent first).
@@ -49,14 +127,19 @@ export function RecordDrawer({
     (b.conductedOn ?? b.scheduledOn).localeCompare(a.conductedOn ?? a.scheduledOn),
   );
   const lastAudit = linkedAudits[0];
-  const state = recordState(record);
+  // Session-local edits (this drawer instance only) layer over the record without mutating it elsewhere.
+  const effectiveRecord: ComplianceRecord = expiryOverride ? { ...record, expiryDate: expiryOverride } : record;
+  const docVersions = docs ?? [record.doc];
+  const state = recordState(effectiveRecord);
   const type = typeByKey(record.typeKey);
   const owner = personById(record.ownerId);
   const meta = STATE_META[state];
   const overdue = state === "overdue";
   const renewalState = renewal ?? record.renewal ?? "none";
   const remarksVal = remarks ?? record.remarks ?? "";
-  const days = record.expiryDate ? daysUntil(record.expiryDate) : null;
+  const days = effectiveRecord.expiryDate ? daysUntil(effectiveRecord.expiryDate) : null;
+
+  const addVersion = (doc: DocVersion) => setDocs((d) => [doc, ...(d ?? [record.doc])]);
 
   const act = () => {
     setRenewal("initiated");
@@ -94,10 +177,10 @@ export function RecordDrawer({
               <CalendarClock className="h-4 w-4" style={{ color: meta.color }} aria-hidden />
               <div>
                 <div className="text-[11px] font-medium text-muted-foreground">
-                  {record.expiryDate ? `Expires ${fmtDate(record.expiryDate)}` : "Perpetual instrument"}
+                  {effectiveRecord.expiryDate ? `Expires ${fmtDate(effectiveRecord.expiryDate)}` : "Perpetual instrument"}
                 </div>
                 <div className="num text-[17px] font-semibold" style={{ color: meta.color }}>
-                  {countdownLabel(record)}
+                  {countdownLabel(effectiveRecord)}
                 </div>
               </div>
             </div>
@@ -155,7 +238,8 @@ export function RecordDrawer({
             <Detail label="Issuing authority">{record.authority}</Detail>
             <Detail label="Issue date">{fmtDate(record.issueDate)}</Detail>
             <Detail label="Expiry date">
-              <span className={cn(overdue && "text-destructive")}>{fmtDate(record.expiryDate)}</span>
+              <span className={cn(overdue && "text-destructive")}>{fmtDate(effectiveRecord.expiryDate)}</span>
+              {expiryOverride && <span className="ml-1.5 text-[10px] font-normal text-primary">(updated)</span>}
             </Detail>
             <Detail label="Owner">
               <span className="inline-flex items-center gap-1.5">
@@ -223,12 +307,71 @@ export function RecordDrawer({
           )}
 
           <section>
-            <div className="section-label mb-2">Evidence</div>
-            <DocChip name={record.doc.name} size={record.doc.size} />
-            <p className="mt-1.5 text-[11px] text-muted-foreground">Uploaded {fmtDate(record.doc.uploadedAt)}</p>
+            <div className="flex items-center justify-between gap-2">
+              <div className="section-label mb-2">Evidence &amp; version history</div>
+              <div className="mb-2 flex items-center gap-1.5">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      addVersion({ name: f.name, size: "—", uploadedAt: todayIso() });
+                      toast.success("New version uploaded", { description: `${f.name} — added to this licence's history. (UI stub)` });
+                    }
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                >
+                  <UploadCloud className="h-3 w-3" aria-hidden /> Upload
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUpdateOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                >
+                  <RefreshCcw className="h-3 w-3" aria-hidden /> Update licence
+                </button>
+              </div>
+            </div>
+            <ol className="space-y-2.5">
+              {docVersions.map((d, i) => (
+                <li key={`${d.name}-${i}`} className="flex items-start gap-2.5">
+                  {i === 0 ? (
+                    <DocChip name={d.name} size={d.size !== "—" ? d.size : undefined} />
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5 text-[11.5px] text-muted-foreground">
+                      <History className="h-3 w-3" aria-hidden /> {d.name}
+                    </span>
+                  )}
+                  <span className="mt-1.5 shrink-0 text-[10.5px] text-muted-foreground">
+                    {i === 0 ? "current · " : "superseded · "}
+                    {fmtDate(d.uploadedAt)}
+                  </span>
+                </li>
+              ))}
+            </ol>
           </section>
         </div>
       </SheetContent>
+
+      <UpdateLicenceDialog
+        open={updateOpen}
+        onOpenChange={setUpdateOpen}
+        currentExpiry={effectiveRecord.expiryDate}
+        onUpdate={(newExpiry, doc) => {
+          setExpiryOverride(newExpiry);
+          addVersion(doc);
+          toast.success("Licence updated", {
+            description: `New expiry ${fmtDate(newExpiry)} — previous document preserved in history.`,
+          });
+        }}
+      />
     </Sheet>
   );
 }

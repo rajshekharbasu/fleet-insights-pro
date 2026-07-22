@@ -34,12 +34,15 @@ import {
 import { fmtDate, inScope } from "@/lib/esg-data";
 import { CriticalBeam, EmptyState, Gloss, LoadingRows, PanelCard, StatePill, useEsg, useStubLoad } from "./primitives";
 import { WorkQueue } from "./WorkQueue";
+import { buildNcRegister, ncItemPlace, NC_SOURCE_LABEL, type NcItem } from "@/lib/esg-nc";
 
 /* --------------------------------- tiles ---------------------------------- */
 
 type PanelSel =
   | { kind: "state"; state: EsgState }
   | { kind: "actions" }
+  | { kind: "openNc" }
+  | { kind: "breaches" }
   | { kind: "domain"; entityId: string; domain: DomainKey }
   | null;
 
@@ -106,6 +109,36 @@ function RiskTile({
         </span>
       </div>
       <div className="mt-1 text-[11.5px] text-muted-foreground">{hint}</div>
+    </div>
+  );
+}
+
+/** Compact drill list for the Open NCs / Monitoring breaches tiles — same NcItem shape as the NC register. */
+function NcItemList({ items, onOpen }: { items: NcItem[]; onOpen: (sub: string) => void }) {
+  if (items.length === 0) return <EmptyState title="Nothing here" hint="No items match in this scope." />;
+  return (
+    <div className="max-h-[380px] overflow-auto">
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          onClick={() => onOpen(item.backlink.kind === "esms" ? item.backlink.sub : "esap")}
+          className="flex w-full items-center justify-between gap-4 border-b border-border/40 px-5 py-3 text-left transition-colors last:border-0 hover:bg-muted/40"
+        >
+          <div className="min-w-0">
+            <div className="truncate text-[12.5px] font-medium">{item.title}</div>
+            <div className="truncate text-[11px] text-muted-foreground">
+              {NC_SOURCE_LABEL[item.source]} · {ncItemPlace(item)}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <span className={cn("num text-[12px] font-semibold", item.ageDays > 30 ? "text-destructive" : "text-muted-foreground")}>
+              {item.ageDays}d
+            </span>
+            <ArrowRight className="h-3.5 w-3.5 text-muted-foreground/60" aria-hidden />
+          </div>
+        </button>
+      ))}
     </div>
   );
 }
@@ -242,7 +275,7 @@ function StackBar({ stat }: { stat: CellStat }) {
 /* --------------------------------- overview -------------------------------- */
 
 export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string }) {
-  const { scope, setScope, audience, goto } = useEsg();
+  const { scope, setScope, audience, goto, period, audit, monitoring } = useEsg();
   const [panel, setPanel] = useState<PanelSel>(null);
   const [view, setView] = useState<"matrix" | "graph">("matrix");
   const loading = useStubLoad(JSON.stringify(scope) + audience);
@@ -250,6 +283,17 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
 
   const agg = useMemo(() => headline(scope), [scope]);
   const external = audience === "external";
+
+  // Live register — the same builder Phase 6/7 read, so these two new tiles
+  // never disagree with the NC register or the Site Monitoring panel.
+  const ncRegister = useMemo(
+    () => buildNcRegister(scope, period, audit, monitoring),
+    [scope, period, audit, monitoring],
+  );
+  const openNcItems = ncRegister.filter(
+    (r) => (r.source === "internal-audit" || r.source === "external-audit") && r.actionStatus !== "closed",
+  );
+  const breachItems = ncRegister.filter((r) => r.source === "monitoring");
 
   // Notification deep-link: open the panel that contains the target record.
   useEffect(() => {
@@ -301,14 +345,27 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
               title: "Open ESAP actions",
               blurb: "Corrective actions from ESDD / ESIA findings — the same numbers as the ESMS register.",
             }
-          : null;
+          : panel?.kind === "openNc"
+            ? {
+                accent: "var(--color-destructive)",
+                title: "Open non-conformities",
+                blurb: "Internal & external audit NCs without a closed corrective action — the same register as NC Reports.",
+              }
+            : panel?.kind === "breaches"
+              ? {
+                  accent: "var(--color-warning)",
+                  title: "Monitoring breaches",
+                  blurb: "Site monitoring readings over their regulatory limit this period.",
+                }
+              : null;
 
   const openActions = ESAP_ACTIONS.filter((a) => a.status !== "closed");
 
   return (
     <div className="space-y-5">
-      {/* Risk-first headline tiles — bad news gets the best real estate */}
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+      {/* Risk-first headline tiles — bad news gets the best real estate.
+          Order: Overdue · Open NCs · Expiring soon · Monitoring breaches · Open actions · Compliant %. */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
         <CriticalBeam active={!external && agg.overdue.length > 0} size="pulse-inner">
           <RiskTile
             label="Overdue items"
@@ -321,12 +378,34 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
           />
         </CriticalBeam>
         <RiskTile
+          label={
+            <>
+              Open <Gloss text="NC" />s
+            </>
+          }
+          value={String(openNcItems.length)}
+          hint="audit non-conformities, no closed action"
+          accent="var(--color-destructive)"
+          active={panel?.kind === "openNc"}
+          onClick={() => setPanel(panel?.kind === "openNc" ? null : { kind: "openNc" })}
+          curated={external}
+        />
+        <RiskTile
           label="Expiring soon"
           value={String(agg.expiring.length)}
           hint="inside the renewal lead window"
           accent="var(--color-warning)"
           active={panel?.kind === "state" && panel.state === "expiring"}
           onClick={() => setPanel(panel?.kind === "state" && panel.state === "expiring" ? null : { kind: "state", state: "expiring" })}
+        />
+        <RiskTile
+          label="Monitoring breaches"
+          value={String(breachItems.length)}
+          hint="over the regulatory limit this period"
+          accent="var(--color-warning)"
+          active={panel?.kind === "breaches"}
+          onClick={() => setPanel(panel?.kind === "breaches" ? null : { kind: "breaches" })}
+          curated={external}
         />
         <RiskTile
           label={
@@ -398,7 +477,13 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
                       color: panelMeta.accent,
                     }}
                   >
-                    {panel.kind === "actions" ? openActions.length : panelRecords.length}
+                    {panel.kind === "actions"
+                      ? openActions.length
+                      : panel.kind === "openNc"
+                        ? openNcItems.length
+                        : panel.kind === "breaches"
+                          ? breachItems.length
+                          : panelRecords.length}
                   </span>
                 </div>
                 <p className="text-[12px] text-muted-foreground">{panelMeta.blurb}</p>
@@ -443,6 +528,8 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
                 );
               })}
             </div>
+          ) : panel.kind === "openNc" || panel.kind === "breaches" ? (
+            <NcItemList items={panel.kind === "openNc" ? openNcItems : breachItems} onOpen={(sub) => goto("esms", { sub })} />
           ) : (
             <WorkQueue records={panelRecords} defaultFilter="all" highlightId={deepLinkRecordId} compact />
           )}
