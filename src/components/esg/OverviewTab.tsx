@@ -7,7 +7,6 @@ import {
   CircleCheck,
   ClipboardList,
   Grid3X3,
-  RefreshCcw,
   ShieldAlert,
   X,
 } from "lucide-react";
@@ -54,6 +53,7 @@ function RiskTile({
   active,
   onClick,
   curated,
+  className,
 }: {
   label: React.ReactNode;
   value: string;
@@ -62,11 +62,12 @@ function RiskTile({
   active?: boolean;
   onClick?: () => void;
   curated?: boolean;
+  className?: string;
 }) {
   if (curated) {
     return (
       <div
-        className="rounded-2xl border border-dashed border-border/70 bg-card/50 p-5"
+        className={cn("rounded-2xl border border-dashed border-border/70 bg-card/50 p-5", className)}
         style={{
           backgroundImage:
             "repeating-linear-gradient(45deg, transparent, transparent 5px, color-mix(in oklab, var(--muted-foreground) 5%, transparent) 5px, color-mix(in oklab, var(--muted-foreground) 5%, transparent) 6px)",
@@ -92,6 +93,7 @@ function RiskTile({
       className={cn(
         "cursor-pointer rounded-2xl border bg-card p-5 shadow-elevated transition-[transform,border-color,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:border-primary/40 active:scale-[0.98]",
         active ? "" : "border-border/60",
+        className,
       )}
       style={
         active
@@ -139,56 +141,6 @@ function NcItemList({ items, onOpen }: { items: NcItem[]; onOpen: (sub: string) 
           </div>
         </button>
       ))}
-    </div>
-  );
-}
-
-/* ------------------------------ flow strip --------------------------------- */
-
-/** The leaking bucket, made visible: stocks and the renewal loop that refills them. */
-function FlowStrip({ valid, expiring, overdue }: { valid: number; expiring: number; overdue: number }) {
-  const stock = (label: string, n: number, state: EsgState) => (
-    <div className="flex items-center gap-2">
-      <span
-        className="grid h-8 w-8 place-items-center rounded-lg"
-        style={{
-          background: `color-mix(in oklab, ${STATE_META[state].color} 13%, transparent)`,
-          color: STATE_META[state].color,
-        }}
-      >
-        {state === "valid" ? (
-          <CircleCheck className="h-4 w-4" aria-hidden />
-        ) : state === "expiring" ? (
-          <CalendarClock className="h-4 w-4" aria-hidden />
-        ) : (
-          <ShieldAlert className="h-4 w-4" aria-hidden />
-        )}
-      </span>
-      <div>
-        <div className="num text-[16px] font-semibold leading-none" style={{ color: STATE_META[state].color }}>
-          {n}
-        </div>
-        <div className="mt-0.5 text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">{label}</div>
-      </div>
-    </div>
-  );
-  const drain = <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" aria-hidden />;
-  return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-3 rounded-2xl border border-border/60 bg-card px-5 py-3.5 shadow-elevated">
-      <div className="mr-1 hidden text-[10.5px] font-semibold uppercase tracking-[0.14em] text-muted-foreground xl:block">
-        Compliance
-        <br />
-        flow
-      </div>
-      {stock("Valid", valid, "valid")}
-      {drain}
-      {stock("Expiring", expiring, "expiring")}
-      {drain}
-      {stock("Overdue", overdue, "overdue")}
-      <div className="ml-auto flex items-center gap-2 rounded-lg bg-primary/8 px-3 py-1.5 text-[11px] font-medium text-primary">
-        <RefreshCcw className="h-3 w-3" aria-hidden />
-        Renewal & remediation pump items back — time drains them forward
-      </div>
     </div>
   );
 }
@@ -337,7 +289,7 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
         ? {
             accent: "var(--color-primary)",
             title: `${ESG_GROUP.entities.find((e) => e.id === panel.entityId)?.short} · ${DOMAINS.find((d) => d.key === panel.domain)?.label}`,
-            blurb: "Drill-down from the compliance matrix — same records, higher resolution.",
+            blurb: "Drill-down from the compliance cards — same records, higher resolution.",
           }
         : panel?.kind === "actions"
           ? {
@@ -366,8 +318,13 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
       {/* Risk-first headline tiles — bad news gets the best real estate.
           Order: Overdue · Open NCs · Expiring soon · Monitoring breaches · Open actions · Compliant %. */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
-        <CriticalBeam active={!external && agg.overdue.length > 0} size="pulse-inner">
+        <CriticalBeam
+          active={!external && agg.overdue.length > 0}
+          size="pulse-inner"
+          className="h-full [&>div:not([data-beam-bloom])]:h-full"
+        >
           <RiskTile
+            className="h-full"
             label="Overdue items"
             value={String(agg.overdue.length)}
             hint="expired · non-compliant now"
@@ -378,6 +335,7 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
           />
         </CriticalBeam>
         <RiskTile
+          className="h-full"
           label={
             <>
               Open <Gloss text="NC" />s
@@ -391,6 +349,7 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
           curated={external}
         />
         <RiskTile
+          className="h-full"
           label="Expiring soon"
           value={String(agg.expiring.length)}
           hint="inside the renewal lead window"
@@ -399,6 +358,7 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
           onClick={() => setPanel(panel?.kind === "state" && panel.state === "expiring" ? null : { kind: "state", state: "expiring" })}
         />
         <RiskTile
+          className="h-full"
           label="Monitoring breaches"
           value={String(breachItems.length)}
           hint="over the regulatory limit this period"
@@ -408,6 +368,7 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
           curated={external}
         />
         <RiskTile
+          className="h-full"
           label={
             <>
               Open <Gloss text="ESAP" /> actions
@@ -421,6 +382,7 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
           curated={external}
         />
         <RiskTile
+          className="h-full"
           label="Compliant"
           value={`${agg.compliantPct}%`}
           hint={`${agg.records.length - agg.overdue.length} of ${agg.records.length} tracked items in force`}
@@ -429,14 +391,6 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
           onClick={() => setPanel(panel?.kind === "state" && panel.state === "valid" ? null : { kind: "state", state: "valid" })}
         />
       </div>
-
-      {!external && (
-        <FlowStrip
-          valid={agg.records.length - agg.overdue.length - agg.expiring.length}
-          expiring={agg.expiring.length}
-          overdue={agg.overdue.length}
-        />
-      )}
 
       {/* Drill panel — same treatment as the KPI-tile reveal on Driver Intelligence */}
       <AnimatePresence initial={false}>
@@ -538,7 +492,7 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
         )}
       </AnimatePresence>
 
-      {/* Matrix / graph — two views over the same rolled-up substance */}
+      {/* Cards / graph — two views over the same rolled-up substance */}
       <PanelCard>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 px-5 py-3.5">
           <div>
@@ -546,7 +500,7 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
             <p className="text-[12px] text-muted-foreground">
               {external
                 ? "Curated view — aggregate health only; item-level lapses are withheld here."
-                : "Click any cell to drill into the records behind it. Same substance, higher resolution."}
+                : "Click any area to drill into the records behind it. Same substance, higher resolution."}
             </p>
           </div>
           <Segmented
@@ -555,7 +509,7 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
             value={view}
             onChange={setView}
             options={[
-              { key: "matrix", label: "Matrix", Icon: Grid3X3 },
+              { key: "matrix", label: "Cards", Icon: Grid3X3 },
               { key: "graph", label: "Graph", Icon: BarChart3 },
             ]}
           />
@@ -566,52 +520,43 @@ export function OverviewTab({ deepLinkRecordId }: { deepLinkRecordId?: string })
         ) : entities.length === 0 ? (
           <EmptyState title="No entities in scope" hint="Adjust the scope selector above." />
         ) : view === "matrix" ? (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[680px] text-[12.5px]">
-              <thead>
-                <tr className="border-b border-border/60 text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
-                  <th className="px-5 py-2.5 text-left font-medium">Entity</th>
-                  {DOMAINS.map((d) => (
-                    <th key={d.key} className="px-3 py-2.5 text-left font-medium">
-                      <Gloss text={d.label} />
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {entities.map((e) => (
-                  <tr key={e.id} className="border-b border-border/40 last:border-0">
-                    <td className="px-5 py-3">
-                      <button
-                        type="button"
-                        onClick={() => setScope({ entityId: e.id })}
-                        className="text-left font-medium text-foreground underline-offset-2 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-                      >
-                        {e.short}
-                      </button>
-                      <div className="text-[11px] text-muted-foreground">{e.depots.length} depot{e.depots.length > 1 ? "s" : ""}</div>
-                    </td>
-                    {DOMAINS.map((d) => {
-                      const stat = cellStat(e.id, d.key);
-                      return (
-                        <td key={d.key} className="px-3 py-3">
-                          <CellChip
-                            stat={stat}
-                            curated={external}
-                            onClick={() => {
-                              if (d.key === "permits" || d.key === "site") setPanel({ kind: "domain", entityId: e.id, domain: d.key });
-                              else if (d.key === "esms") goto("esms");
-                              else if (d.key === "vendor") goto("vendors");
-                              else goto("projects");
-                            }}
-                          />
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="grid gap-4 p-5 sm:grid-cols-2 xl:grid-cols-3">
+            {entities.map((e) => (
+              <div key={e.id} className="rounded-2xl border border-border/60 bg-background/60 p-4">
+                <button
+                  type="button"
+                  onClick={() => setScope({ entityId: e.id })}
+                  className="text-left text-[13.5px] font-semibold text-foreground underline-offset-2 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                >
+                  {e.short}
+                </button>
+                <div className="mt-0.5 text-[11px] text-muted-foreground">
+                  {e.depots.length} depot{e.depots.length > 1 ? "s" : ""}
+                </div>
+                <ul className="mt-3 space-y-2 border-t border-border/50 pt-3">
+                  {DOMAINS.map((d) => {
+                    const stat = cellStat(e.id, d.key);
+                    return (
+                      <li key={d.key} className="flex items-center justify-between gap-3">
+                        <span className="text-[11.5px] text-muted-foreground">
+                          <Gloss text={d.label} />
+                        </span>
+                        <CellChip
+                          stat={stat}
+                          curated={external}
+                          onClick={() => {
+                            if (d.key === "permits" || d.key === "site") setPanel({ kind: "domain", entityId: e.id, domain: d.key });
+                            else if (d.key === "esms") goto("esms");
+                            else if (d.key === "vendor") goto("vendors");
+                            else goto("projects");
+                          }}
+                        />
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
           </div>
         ) : (
           <div className="space-y-4 p-5">
